@@ -4,8 +4,14 @@ from hwbot.timeutil import (
     format_remaining,
     is_deadline_open,
     parse_deadline,
+    parse_local_date_time,
     remaining_seconds,
 )
+
+
+def test_parse_local_date_time() -> None:
+    ts = parse_local_date_time("2026-09-05", "13:00")
+    assert ts == parse_deadline("2026-09-05 13:00")
 
 
 def test_parse_deadline_moscow() -> None:

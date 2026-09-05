@@ -23,3 +23,7 @@ class HomeworkNotFoundError(HwbotError):
 
 class NotRegisteredError(HwbotError):
     pass
+
+
+class CourseError(HwbotError):
+    pass

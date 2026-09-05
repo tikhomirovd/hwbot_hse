@@ -16,6 +16,10 @@ def now_ts(tz_name: str = MOSCOW_TZ) -> int:
     return int(datetime.now(zone(tz_name)).timestamp())
 
 
+def parse_local_date_time(date_text: str, time_text: str, tz_name: str = MOSCOW_TZ) -> int:
+    return parse_deadline(f"{date_text.strip()} {time_text.strip()}", tz_name)
+
+
 def parse_deadline(raw: str, tz_name: str = MOSCOW_TZ) -> int:
     text = raw.strip()
     last_error: ValueError | None = None
