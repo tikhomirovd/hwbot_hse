@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from hwbot.models import Assessment, Student, Submission
+from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.reminders import (
     WINDOW_12H,
     WINDOW_24H,
+    WINDOW_ACCEPT_CLOSED,
     WINDOW_ACCEPT_CLOSING,
     WINDOW_DEADLINE_PASSED,
     collect_reminder_targets,
+    reminder_text,
     reminder_window,
 )
 
@@ -99,6 +101,113 @@ def test_deadline_passed_and_accept_closing() -> None:
     windows = {target.window for target in targets}
     assert WINDOW_ACCEPT_CLOSING in windows
     assert WINDOW_DEADLINE_PASSED in windows
+
+
+def test_late_day_two_after_25_hours() -> None:
+    deadline = 100_000
+    homework = _hw(deadline)
+    student = _student(5)
+    now = deadline + 25 * 3600
+    targets = collect_reminder_targets([homework], [student], {}, set(), now_ts=now)
+    windows = {target.window for target in targets}
+    assert "late_2" in windows
+    assert WINDOW_DEADLINE_PASSED in windows
+    assert [target.window for target in targets].count(WINDOW_DEADLINE_PASSED) == 1
+    targets = collect_reminder_targets(
+        [homework],
+        [student],
+        {},
+        sent={(1, 5, "late_2")},
+        now_ts=now,
+    )
+    windows = {target.window for target in targets}
+    assert "late_2" not in windows
+
+
+def test_late_day_matches_current_day_then_closes() -> None:
+    deadline = 100_000
+    homework = _hw(deadline)
+    student = _student(5)
+    day_seven = deadline + 7 * 86400
+    targets = collect_reminder_targets(
+        [homework], [student], {}, set(), now_ts=day_seven
+    )
+    windows = {target.window for target in targets}
+    assert "late_7" in windows
+    assert WINDOW_ACCEPT_CLOSED not in windows
+    after_close = day_seven + 1
+    targets = collect_reminder_targets(
+        [homework], [student], {}, set(), now_ts=after_close
+    )
+    windows = {target.window for target in targets}
+    assert WINDOW_ACCEPT_CLOSED in windows
+    assert not any(window.startswith("late_") for window in windows)
+
+
+def test_accept_closed_skips_submitted() -> None:
+    deadline = 100_000
+    homework = _hw(deadline)
+    student = _student(5)
+    now = homework.accept_until_ts + 10 if homework.accept_until_ts else deadline
+    targets = collect_reminder_targets(
+        [homework],
+        [student],
+        latest_by_pair={(1, 5): Submission(1, 5, 1, "x", deadline)},
+        sent=set(),
+        now_ts=now,
+    )
+    assert targets == []
+
+
+def test_no_daily_late_when_rule_is_none() -> None:
+    deadline = 100_000
+    exam = _hw(deadline)
+    exam = Assessment(
+        id=2,
+        code="exam",
+        label="Экзамен",
+        title="Экзамен",
+        body="body",
+        component="exam",
+        weight_final=0.30,
+        submit_via_bot=True,
+        issued_at=1,
+        deadline_ts=deadline,
+        accept_until_ts=deadline + 7 * 86400,
+        graded_on_ts=None,
+        late_rule="none",
+        blocking=True,
+        active=True,
+    )
+    student = _student(5)
+    now = deadline + 25 * 3600
+    targets = collect_reminder_targets([exam], [student], {}, set(), now_ts=now)
+    windows = {target.window for target in targets}
+    assert not any(window.startswith("late_") for window in windows)
+    assert WINDOW_DEADLINE_PASSED in windows
+
+
+def test_accept_closed_text() -> None:
+    target = ReminderTarget(
+        assessment=_hw(100_000),
+        student=_student(5),
+        window=WINDOW_ACCEPT_CLOSED,
+    )
+    text = reminder_text(target)
+    assert "больше нельзя" in text
+    assert "0" in text
+
+
+def test_late_day_text_includes_cap() -> None:
+    target = ReminderTarget(
+        assessment=_hw(100_000),
+        student=_student(5),
+        window="late_2",
+    )
+    text = reminder_text(target, cap=8.0)
+    assert "ещё минус один балл" in text
+    assert "потолок 8" in text
+    assert "/submit" in text
 
 
 def test_unregistered_students_are_skipped() -> None:

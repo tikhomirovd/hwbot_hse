@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from hwbot.grading import days_late
 from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.timeutil import format_dt
 
@@ -9,6 +10,8 @@ WINDOW_24H = "24h"
 WINDOW_12H = "12h"
 WINDOW_DEADLINE_PASSED = "deadline_passed"
 WINDOW_ACCEPT_CLOSING = "accept_closing"
+WINDOW_ACCEPT_CLOSED = "accept_closed"
+WINDOW_LATE_PREFIX = "late_"
 HOUR = 3600
 
 
@@ -32,6 +35,37 @@ def deadline_has_passed(deadline_ts: int, now_ts: int) -> bool:
     return now_ts >= deadline_ts
 
 
+def accept_is_closed(accept_until_ts: int, now_ts: int) -> bool:
+    return now_ts > accept_until_ts
+
+
+def late_day_window(
+    deadline_ts: int,
+    accept_until_ts: int | None,
+    now_ts: int,
+    late_rule: str,
+) -> str | None:
+    if late_rule == "none":
+        return None
+    if now_ts <= deadline_ts:
+        return None
+    if accept_until_ts is not None and now_ts > accept_until_ts:
+        return None
+    days = days_late(now_ts, deadline_ts)
+    if days < 2:
+        return None
+    return f"{WINDOW_LATE_PREFIX}{days}"
+
+
+def parse_late_days(window: str) -> int | None:
+    if not window.startswith(WINDOW_LATE_PREFIX):
+        return None
+    suffix = window.removeprefix(WINDOW_LATE_PREFIX)
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
 def collect_reminder_targets(
     assessments: Sequence[Assessment],
     students: Sequence[Student],
@@ -45,19 +79,30 @@ def collect_reminder_targets(
         if not assessment.active or not assessment.submit_via_bot:
             continue
         windows: list[str] = []
-        if assessment.deadline_ts is not None:
+        closed = (
+            assessment.accept_until_ts is not None
+            and accept_is_closed(assessment.accept_until_ts, now_ts)
+        )
+        if closed:
+            windows.append(WINDOW_ACCEPT_CLOSED)
+        elif assessment.deadline_ts is not None:
             before = reminder_window(assessment.deadline_ts, now_ts)
             if before is not None:
                 windows.append(before)
             elif deadline_has_passed(assessment.deadline_ts, now_ts):
-                still_open = (
-                    assessment.accept_until_ts is None
-                    or now_ts <= assessment.accept_until_ts
+                windows.append(WINDOW_DEADLINE_PASSED)
+                late = late_day_window(
+                    assessment.deadline_ts,
+                    assessment.accept_until_ts,
+                    now_ts,
+                    assessment.late_rule,
                 )
-                if still_open:
-                    windows.append(WINDOW_DEADLINE_PASSED)
-        if assessment.accept_until_ts is not None and accept_closing_window(
-            assessment.accept_until_ts, now_ts
+                if late is not None:
+                    windows.append(late)
+        if (
+            not closed
+            and assessment.accept_until_ts is not None
+            and accept_closing_window(assessment.accept_until_ts, now_ts)
         ):
             windows.append(WINDOW_ACCEPT_CLOSING)
         if not windows:
@@ -77,8 +122,18 @@ def collect_reminder_targets(
     return targets
 
 
-def reminder_text(target: ReminderTarget) -> str:
-    title = target.assessment.title
+def _work_name(assessment: Assessment) -> str:
+    return assessment.label or assessment.title
+
+
+def _format_cap(cap: float) -> str:
+    if cap == int(cap):
+        return str(int(cap))
+    return str(cap)
+
+
+def reminder_text(target: ReminderTarget, cap: float | None = None) -> str:
+    title = _work_name(target.assessment)
     accept = target.assessment.accept_until_ts
     accept_text = format_dt(accept) if accept is not None else "закрытия приёма"
     if target.window == WINDOW_24H:
@@ -102,6 +157,18 @@ def reminder_text(target: ReminderTarget) -> str:
         return (
             f"Дедлайн по «{title}» прошёл, приём открыт до {accept_text}."
             f"{extra}\n"
+            "Сдать: /submit"
+        )
+    if target.window == WINDOW_ACCEPT_CLOSED:
+        return f"Всё, сдать «{title}» больше нельзя, будет 0 баллов."
+    late_days = parse_late_days(target.window)
+    if late_days is not None:
+        cap_part = ""
+        if cap is not None:
+            cap_part = f" Сейчас потолок {_format_cap(cap)}."
+        return (
+            f"Хоп, по «{title}» съелся ещё минус один балл.{cap_part}\n"
+            "Очень жду сдачу.\n"
             "Сдать: /submit"
         )
     return (
