@@ -1,0 +1,19 @@
+[project]
+name = "hwbot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.31.0",
+    "aiosqlite>=0.22.1",
+    "python-dotenv>=1.2.3",
+    "rapidfuzz>=3.14.6",
+]
+
+[project.scripts]
+hwbot = "hwbot:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
