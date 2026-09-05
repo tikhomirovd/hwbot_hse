@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from aiogram.filters.callback_data import CallbackData
 
+from hwbot.commands import setup_commands
 from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import (
@@ -87,6 +88,8 @@ async def cmd_start(
         await message.answer(format_profile(student))
         return
     if is_admin(message.from_user.id, settings):
+        if message.bot is not None:
+            await setup_commands(message.bot, settings)
         await message.answer(
             "Ты админ. Студентом в списке тебя нет — это нормально.\n\n"
             "/newhw — новое ДЗ\n"
