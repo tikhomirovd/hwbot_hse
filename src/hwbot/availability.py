@@ -53,7 +53,8 @@ def upcoming_assessments(
 
 
 def looks_like_submission(text: str, *, has_open_work: bool = False) -> bool:
-    _ = has_open_work
+    if has_open_work and text.strip():
+        return True
     lowered = text.casefold()
     return any(marker in lowered for marker in SUBMISSION_MARKERS)
 
