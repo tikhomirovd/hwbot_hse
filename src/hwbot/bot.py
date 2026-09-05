@@ -4,6 +4,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from hwbot.commands import setup_commands
@@ -23,7 +25,7 @@ async def reminder_loop(bot: Bot, db: Database, stop: asyncio.Event) -> None:
         except Exception:
             logger.exception("reminder tick failed")
         try:
-            await asyncio.wait_for(stop.wait(), timeout=60)
+            await asyncio.wait_for(stop.wait(), timeout=300)
         except TimeoutError:
             continue
 
@@ -39,7 +41,10 @@ async def run_bot(settings: Settings | None = None) -> None:
     try:
         if await db.student_count() == 0:
             await db.seed_roster(load_roster(settings.roster_path))
-        bot = Bot(token=settings.bot_token)
+        bot = Bot(
+            token=settings.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
         try:
             dispatcher = Dispatcher(storage=MemoryStorage())
             dispatcher.include_router(build_router())

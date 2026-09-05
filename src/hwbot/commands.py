@@ -11,19 +11,18 @@ from hwbot.config import Settings
 logger = logging.getLogger(__name__)
 
 STUDENT_COMMANDS = [
-    BotCommand(command="start", description="Профиль и регистрация"),
-    BotCommand(command="hw", description="Активные ДЗ"),
-    BotCommand(command="submit", description="Сдать ДЗ"),
-    BotCommand(command="mysubmissions", description="Мои сдачи"),
-    BotCommand(command="grade", description="Оценка"),
-    BotCommand(command="attendance", description="Посещаемость"),
-    BotCommand(command="help", description="Помощь"),
-    BotCommand(command="cancel", description="Отменить ввод"),
+    BotCommand(command="start", description="профиль и регистрация"),
+    BotCommand(command="hw", description="что сдавать сейчас"),
+    BotCommand(command="submit", description="сдать работу"),
+    BotCommand(command="mysubmissions", description="что уже сдано"),
+    BotCommand(command="grade", description="оценка и разбивка"),
+    BotCommand(command="attendance", description="посещаемость"),
+    BotCommand(command="help", description="как здесь всё устроено"),
+    BotCommand(command="cancel", description="выйти из диалога"),
 ]
 
 ADMIN_COMMANDS = [
     *STUDENT_COMMANDS,
-    BotCommand(command="newhw", description="Новое ДЗ"),
     BotCommand(command="status", description="Кто сдал"),
     BotCommand(command="export", description="Выгрузить CSV"),
     BotCommand(command="missing", description="Кто не сдал"),

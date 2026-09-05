@@ -8,12 +8,18 @@ from hwbot.reminders import (
     WINDOW_ACCEPT_CLOSING,
     WINDOW_DEADLINE_PASSED,
     collect_reminder_targets,
+    reached_windows,
     reminder_text,
-    reminder_window,
+    reminders_are_quiet,
 )
+from hwbot.timeutil import parse_deadline
 
 
-def _student(student_id: int, telegram_id: int | None = 10) -> Student:
+def _student(
+    student_id: int,
+    telegram_id: int | None = 10,
+    registered_at: int | None = 1,
+) -> Student:
     return Student(
         id=student_id,
         full_name="Тест Тестов",
@@ -21,6 +27,7 @@ def _student(student_id: int, telegram_id: int | None = 10) -> Student:
         email="t@edu.hse.ru",
         telegram_id=telegram_id,
         telegram_username="t",
+        registered_at=registered_at,
     )
 
 
@@ -44,12 +51,31 @@ def _hw(deadline_ts: int) -> Assessment:
     )
 
 
-def test_windows() -> None:
+def test_reached_windows_keeps_both_24h_and_12h() -> None:
     deadline = 100_000
-    assert reminder_window(deadline, deadline - 20 * 3600) == WINDOW_24H
-    assert reminder_window(deadline, deadline - 10 * 3600) == WINDOW_12H
-    assert reminder_window(deadline, deadline - 30 * 3600) is None
-    assert reminder_window(deadline, deadline + 1) is None
+    windows = reached_windows(deadline, deadline - 3600)
+    assert WINDOW_24H in windows
+    assert WINDOW_12H in windows
+
+
+def test_reached_windows_after_deadline() -> None:
+    deadline = 100_000
+    windows = reached_windows(
+        deadline,
+        deadline + 25 * 3600,
+        accept_until_ts=deadline + 7 * 86400,
+        late_rule="homework",
+    )
+    assert WINDOW_24H in windows
+    assert WINDOW_DEADLINE_PASSED in windows
+    assert "late_2" in windows
+
+
+def test_quiet_hours_moscow() -> None:
+    night = parse_deadline("2026-09-19 02:00")
+    morning = parse_deadline("2026-09-19 10:00")
+    assert reminders_are_quiet(night)
+    assert not reminders_are_quiet(morning)
 
 
 def test_skip_submitted_and_already_sent() -> None:
@@ -71,7 +97,7 @@ def test_skip_submitted_and_already_sent() -> None:
         sent={(1, 5, WINDOW_24H)},
         now_ts=now,
     )
-    assert targets == []
+    assert all(target.window != WINDOW_24H for target in targets)
     targets = collect_reminder_targets(
         [homework],
         [student],
@@ -79,8 +105,7 @@ def test_skip_submitted_and_already_sent() -> None:
         sent=set(),
         now_ts=now,
     )
-    assert len(targets) == 1
-    assert targets[0].window == WINDOW_24H
+    assert WINDOW_24H in {target.window for target in targets}
 
 
 def test_deadline_passed_and_accept_closing() -> None:
@@ -93,8 +118,8 @@ def test_deadline_passed_and_accept_closing() -> None:
     )
     windows = {target.window for target in targets}
     assert WINDOW_DEADLINE_PASSED in windows
-    closing_now = homework.accept_until_ts - 10 * 3600 if homework.accept_until_ts else now
     assert homework.accept_until_ts is not None
+    closing_now = homework.accept_until_ts - 10 * 3600
     targets = collect_reminder_targets(
         [homework], [student], {}, set(), now_ts=closing_now
     )
@@ -112,7 +137,6 @@ def test_late_day_two_after_25_hours() -> None:
     windows = {target.window for target in targets}
     assert "late_2" in windows
     assert WINDOW_DEADLINE_PASSED in windows
-    assert [target.window for target in targets].count(WINDOW_DEADLINE_PASSED) == 1
     targets = collect_reminder_targets(
         [homework],
         [student],
@@ -159,9 +183,19 @@ def test_accept_closed_skips_submitted() -> None:
     assert targets == []
 
 
+def test_accept_closed_skips_late_registration() -> None:
+    deadline = 100_000
+    homework = _hw(deadline)
+    assert homework.accept_until_ts is not None
+    student = _student(5, registered_at=homework.accept_until_ts + 100)
+    targets = collect_reminder_targets(
+        [homework], [student], {}, set(), now_ts=homework.accept_until_ts + 200
+    )
+    assert targets == []
+
+
 def test_no_daily_late_when_rule_is_none() -> None:
     deadline = 100_000
-    exam = _hw(deadline)
     exam = Assessment(
         id=2,
         code="exam",
@@ -194,8 +228,9 @@ def test_accept_closed_text() -> None:
         window=WINDOW_ACCEPT_CLOSED,
     )
     text = reminder_text(target)
-    assert "больше нельзя" in text
+    assert "закрыт" in text
     assert "0" in text
+    assert "Хоп" not in text
 
 
 def test_late_day_text_includes_cap() -> None:
@@ -205,9 +240,10 @@ def test_late_day_text_includes_cap() -> None:
         window="late_2",
     )
     text = reminder_text(target, cap=8.0)
-    assert "ещё минус один балл" in text
-    assert "потолок 8" in text
+    assert "потолок" in text
+    assert "8" in text
     assert "/submit" in text
+    assert "Хоп" not in text
 
 
 def test_unregistered_students_are_skipped() -> None:

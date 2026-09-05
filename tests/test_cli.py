@@ -22,21 +22,13 @@ def test_seed_and_grade_parsers() -> None:
     assert book.command == "gradebook"
 
 
-def test_create_hw_parser() -> None:
-    args = build_parser().parse_args(
-        [
-            "create-hw",
-            "--title",
-            "ДЗ 1",
-            "--text",
-            "Ссылка",
-            "--deadline",
-            "2026-09-12 23:59",
-            "--groups",
-            "261,262",
-            "--no-broadcast",
-        ]
-    )
-    assert args.command == "create-hw"
-    assert args.no_broadcast
-    assert args.groups == "261,262"
+def test_broadcast_and_students_parsers() -> None:
+    broadcast = build_parser().parse_args(["broadcast", "--text", "Сервер лежит"])
+    assert broadcast.command == "broadcast"
+    assert broadcast.text == "Сервер лежит"
+    registered = build_parser().parse_args(["students", "--registered"])
+    assert registered.registered
+    missing = build_parser().parse_args(["students", "--missing"])
+    assert missing.missing
+    unbind = build_parser().parse_args(["unbind", "--student", "Иванов"])
+    assert unbind.student == "Иванов"

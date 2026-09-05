@@ -12,6 +12,7 @@ class Student:
     telegram_id: int | None
     telegram_username: str | None
     seminar_group: str | None = None
+    registered_at: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

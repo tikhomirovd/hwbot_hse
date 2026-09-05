@@ -5,7 +5,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from hwbot.course import Assessment as CourseAssessment
 from hwbot.course import Course
+from hwbot.course import Lesson as CourseLesson
 from hwbot.db import Database
 from hwbot.grading import GradeReport, StudentState, build_report
 from hwbot.matching import match_students
@@ -21,6 +23,7 @@ class SeedReport:
     created_assessments: int
     updated_assessments: int
     unchanged_assessments: int
+    changes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,71 @@ class WriteReport:
     updated: int
     failed: tuple[MatchFailure, ...]
     warnings: tuple[str, ...]
+
+
+def _lesson_same(existing: Lesson, lesson: CourseLesson) -> bool:
+    return (
+        existing.kind == lesson.kind
+        and existing.seminar_group == lesson.seminar_group
+        and existing.topic == lesson.topic
+        and existing.title == lesson.title
+        and existing.starts_ts == lesson.starts_ts
+        and existing.ends_ts == lesson.ends_ts
+        and existing.room == lesson.room
+        and existing.module == lesson.module
+    )
+
+
+def _assessment_same(existing: Assessment, assessment: CourseAssessment) -> bool:
+    return (
+        existing.label == assessment.label
+        and existing.title == assessment.title
+        and existing.body == assessment.summary
+        and existing.component == assessment.component
+        and existing.weight_final == assessment.weight_final
+        and existing.submit_via_bot == assessment.submit_via_bot
+        and existing.issued_at == assessment.issued_at
+        and existing.deadline_ts == assessment.deadline_ts
+        and existing.accept_until_ts == assessment.accept_until_ts
+        and existing.graded_on_ts == assessment.graded_on_ts
+        and existing.late_rule == assessment.late_rule
+        and existing.blocking == assessment.blocking
+    )
+
+
+async def preview_seed(db: Database, course: Course) -> SeedReport:
+    created_l = updated_l = unchanged_l = 0
+    created_a = updated_a = unchanged_a = 0
+    details: list[str] = []
+    for lesson in course.lessons:
+        existing = await db.get_lesson_by_code(lesson.code)
+        if existing is None:
+            created_l += 1
+            details.append(f"+ занятие {lesson.code}")
+        elif _lesson_same(existing, lesson):
+            unchanged_l += 1
+        else:
+            updated_l += 1
+            details.append(f"~ занятие {lesson.code}")
+    for assessment in course.assessments:
+        found = await db.get_assessment_by_code(assessment.code)
+        if found is None:
+            created_a += 1
+            details.append(f"+ элемент {assessment.code}")
+        elif _assessment_same(found, assessment):
+            unchanged_a += 1
+        else:
+            updated_a += 1
+            details.append(f"~ элемент {assessment.code}")
+    return SeedReport(
+        created_lessons=created_l,
+        updated_lessons=updated_l,
+        unchanged_lessons=unchanged_l,
+        created_assessments=created_a,
+        updated_assessments=updated_a,
+        unchanged_assessments=unchanged_a,
+        changes=tuple(details),
+    )
 
 
 async def seed_course(db: Database, course: Course) -> SeedReport:

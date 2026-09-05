@@ -246,7 +246,6 @@ def _parse_late_rules(raw: Mapping[str, object]) -> tuple[LateRule, ...]:
     items: list[LateRule] = []
     for name, value in raw.items():
         table = _table(value, f"late_rules.{name}")
-        floor_within = table.get("floor_within_days")
         items.append(
             LateRule(
                 name=name,
@@ -255,11 +254,7 @@ def _parse_late_rules(raw: Mapping[str, object]) -> tuple[LateRule, ...]:
                 zero_after_days=_int(
                     table.get("zero_after_days"), f"late_rules.{name}.zero_after_days"
                 ),
-                floor_within_days=(
-                    None
-                    if floor_within is None
-                    else _int(floor_within, f"late_rules.{name}.floor_within_days")
-                ),
+                floor_within_days=None,
             )
         )
     if not items:

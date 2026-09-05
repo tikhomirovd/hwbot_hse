@@ -4,7 +4,7 @@ import pytest
 
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
-from hwbot.errors import DeadlineClosedError
+from hwbot.errors import DeadlineClosedError, NotIssuedError
 from hwbot.ops import seed_course
 from hwbot.roster import load_roster
 from hwbot.config import PROJECT_ROOT
@@ -105,6 +105,36 @@ async def test_grade_set_updates(seeded: Database) -> None:
     assert grade is not None
     assert grade.score == 9.0
     assert grade.comment == "ок"
+
+
+async def test_reject_before_issued_at(seeded: Database) -> None:
+    students = await seeded.list_students()
+    student = next(item for item in students if item.group_code == "БАЦРФ261")
+    homework = await seeded.create_homework(
+        "ДЗ future",
+        "text",
+        deadline_ts=2_000_000,
+        group_codes=("БАЦРФ261",),
+        created_at=1_500_000,
+    )
+    with pytest.raises(NotIssuedError):
+        await seeded.add_submission(
+            student.id,
+            homework.id,
+            "https://github.com/x",
+            submitted_at=1_000_000,
+        )
+
+
+async def test_bind_sets_registered_at(seeded: Database) -> None:
+    students = await seeded.list_students()
+    student = next(item for item in students if "Абрамова" in item.full_name)
+    bound = await seeded.bind_telegram(student.id, 222, "abra")
+    assert bound.registered_at is not None
+    await seeded.unbind_telegram(student.id)
+    unbound = await seeded.get_student(student.id)
+    assert unbound is not None
+    assert unbound.telegram_id is None
 
 
 async def test_status_open_for_missing(seeded: Database) -> None:

@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from hwbot.bot import run_bot
 from hwbot.config import load_settings
@@ -14,8 +16,7 @@ from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, gradebook_csv, status_csv
-from hwbot.groups import parse_groups
-from hwbot.notify import broadcast_homework
+from hwbot.notify import broadcast_text
 from hwbot.models import Student
 from hwbot.ops import (
     MatchFailure,
@@ -23,6 +24,7 @@ from hwbot.ops import (
     apply_attendance,
     apply_grades,
     apply_roster_seminar_groups,
+    preview_seed,
     read_named_csv,
     reports_for_students,
     resolve_all,
@@ -31,7 +33,7 @@ from hwbot.ops import (
     split_names,
 )
 from hwbot.roster import load_roster
-from hwbot.timeutil import now_ts, parse_deadline
+from hwbot.timeutil import now_ts
 
 
 async def _with_db(db_path: Path) -> Database:
@@ -57,32 +59,50 @@ async def cmd_import_roster() -> int:
         await db.close()
 
 
-async def cmd_create_hw(
-    title: str,
-    text: str,
-    deadline: str,
-    groups: str,
-    broadcast: bool,
-) -> int:
+async def cmd_broadcast(text: str) -> int:
+    settings = load_settings()
+    db = await _with_db(settings.db_path)
+    bot = Bot(
+        settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        sent = await broadcast_text(bot, db, text)
+        print(f"Разослал {sent} студентам")
+        return 0
+    finally:
+        await bot.session.close()
+        await db.close()
+
+
+async def cmd_students(registered: bool | None) -> int:
     settings = load_settings()
     db = await _with_db(settings.db_path)
     try:
-        if await db.student_count() == 0:
-            await db.seed_roster(load_roster(settings.roster_path))
-        homework = await db.create_homework(
-            title=title,
-            body=text,
-            deadline_ts=parse_deadline(deadline, settings.timezone),
-            group_codes=parse_groups(groups),
-        )
-        sent = 0
-        if broadcast:
-            bot = Bot(settings.bot_token)
-            try:
-                sent = await broadcast_homework(bot, db, homework)
-            finally:
-                await bot.session.close()
-        print(f"Создано ДЗ #{homework.id} «{homework.title}», рассылка: {sent}")
+        students = await db.list_students()
+        if registered is True:
+            students = [item for item in students if item.telegram_id is not None]
+        elif registered is False:
+            students = [item for item in students if item.telegram_id is None]
+        print(f"{len(students)}")
+        for student in students:
+            mark = "да" if student.telegram_id is not None else "нет"
+            print(f"{student.full_name}\t{student.group_code}\t{mark}")
+        return 0
+    finally:
+        await db.close()
+
+
+async def cmd_unbind(student_query: str) -> int:
+    settings = load_settings()
+    db = await _with_db(settings.db_path)
+    try:
+        matched = resolve_student(student_query, await db.list_students())
+        if isinstance(matched, MatchFailure):
+            print(f"{matched.query}: {matched.reason}", file=sys.stderr)
+            return 1
+        await db.unbind_telegram(matched.id)
+        print("Отвязал")
         return 0
     finally:
         await db.close()
@@ -155,23 +175,24 @@ def _print_write_report(report: WriteReport, *, dry_run: bool) -> None:
 
 
 async def cmd_seed_course(path: Path, dry_run: bool) -> int:
-    course = load_course(path)
-    if dry_run:
-        print(f"Занятий: {len(course.lessons)}")
-        print(f"Элементов контроля: {len(course.assessments)}")
-        return 0
     settings = load_settings()
+    course = load_course(path)
     db = await _with_db(settings.db_path)
     try:
-        report = await seed_course(db, course)
+        report = await (preview_seed(db, course) if dry_run else seed_course(db, course))
+        prefix = "dry-run, " if dry_run else ""
         print(
-            f"занятия: создано {report.created_lessons}, "
-            f"обновлено {report.updated_lessons}"
+            f"{prefix}занятия: создано {report.created_lessons}, "
+            f"обновлено {report.updated_lessons}, "
+            f"без изменений {report.unchanged_lessons}"
         )
         print(
-            f"элементы: создано {report.created_assessments}, "
-            f"обновлено {report.updated_assessments}"
+            f"{prefix}элементы: создано {report.created_assessments}, "
+            f"обновлено {report.updated_assessments}, "
+            f"без изменений {report.unchanged_assessments}"
         )
+        for change in report.changes:
+            print(change)
         return 0
     finally:
         await db.close()
@@ -450,12 +471,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("import-roster", help="Залить список студентов из CSV")
     sub.add_parser("list-hw", help="Список ДЗ")
 
-    create = sub.add_parser("create-hw", help="Создать ДЗ и разослать")
-    create.add_argument("--title", required=True)
-    create.add_argument("--text", required=True)
-    create.add_argument("--deadline", required=True)
-    create.add_argument("--groups", required=True)
-    create.add_argument("--no-broadcast", action="store_true")
+    broadcast = sub.add_parser("broadcast", help="Разослать текст зарегистрированным")
+    broadcast.add_argument("--text", required=True)
+
+    students_cmd = sub.add_parser("students", help="Список студентов")
+    students_flags = students_cmd.add_mutually_exclusive_group()
+    students_flags.add_argument("--registered", action="store_true")
+    students_flags.add_argument("--missing", action="store_true")
+
+    unbind = sub.add_parser("unbind", help="Отвязать Telegram от студента")
+    unbind.add_argument("--student", required=True)
 
     status = sub.add_parser("status", help="Кто сдал")
     status.add_argument("--hw", type=int, required=True)
@@ -515,16 +540,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(cmd_run())
     if args.command == "import-roster":
         return asyncio.run(cmd_import_roster())
-    if args.command == "create-hw":
-        return asyncio.run(
-            cmd_create_hw(
-                title=args.title,
-                text=args.text,
-                deadline=args.deadline,
-                groups=args.groups,
-                broadcast=not args.no_broadcast,
-            )
-        )
+    if args.command == "broadcast":
+        return asyncio.run(cmd_broadcast(args.text))
+    if args.command == "students":
+        flag: bool | None = None
+        if args.registered:
+            flag = True
+        elif args.missing:
+            flag = False
+        return asyncio.run(cmd_students(flag))
+    if args.command == "unbind":
+        return asyncio.run(cmd_unbind(args.student))
     if args.command == "list-hw":
         return asyncio.run(cmd_list_hw())
     if args.command == "status":

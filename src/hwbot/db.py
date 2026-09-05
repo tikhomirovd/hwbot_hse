@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+import sqlite3
+
 import aiosqlite
 
 from hwbot.course import Assessment as CourseAssessment
@@ -12,6 +14,7 @@ from hwbot.errors import (
     AlreadyBoundError,
     DeadlineClosedError,
     HomeworkNotFoundError,
+    NotIssuedError,
     StudentTakenError,
 )
 from hwbot.models import (
@@ -34,7 +37,8 @@ CREATE TABLE IF NOT EXISTS students (
     email TEXT NOT NULL UNIQUE,
     telegram_id INTEGER UNIQUE,
     telegram_username TEXT,
-    seminar_group TEXT
+    seminar_group TEXT,
+    registered_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS assessments (
@@ -127,7 +131,14 @@ def _student_from_row(row: aiosqlite.Row) -> Student:
             None if row["telegram_username"] is None else str(row["telegram_username"])
         ),
         seminar_group=None if seminar is None else str(seminar),
+        registered_at=_optional_int(row, "registered_at"),
     )
+
+
+def _optional_int(row: aiosqlite.Row, key: str) -> int | None:
+    if key not in row.keys() or row[key] is None:
+        return None
+    return int(row[key])
 
 
 def _assessment_from_row(row: aiosqlite.Row) -> Assessment:
@@ -209,6 +220,7 @@ class Database:
         await self._migrate_legacy_tables()
         await self._conn.executescript(SCHEMA)
         await self._ensure_seminar_group_column()
+        await self._ensure_registered_at_column()
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -270,6 +282,13 @@ class Database:
         if "seminar_group" not in columns:
             await self._require().execute(
                 "ALTER TABLE students ADD COLUMN seminar_group TEXT"
+            )
+
+    async def _ensure_registered_at_column(self) -> None:
+        columns = await self._columns("students")
+        if "registered_at" not in columns:
+            await self._require().execute(
+                "ALTER TABLE students ADD COLUMN registered_at INTEGER"
             )
 
     async def student_count(self) -> int:
@@ -361,18 +380,53 @@ class Database:
             raise HomeworkNotFoundError("Студент не найден")
         if target.telegram_id is not None and target.telegram_id != telegram_id:
             raise StudentTakenError("Этот человек уже зарегистрирован")
-        await conn.execute(
-            """
-            UPDATE students
-            SET telegram_id = ?, telegram_username = ?
-            WHERE id = ?
-            """,
-            (telegram_id, username, student_id),
-        )
-        await conn.commit()
+        try:
+            await conn.execute(
+                """
+                UPDATE students
+                SET telegram_id = ?, telegram_username = ?,
+                    registered_at = COALESCE(registered_at, ?)
+                WHERE id = ?
+                """,
+                (telegram_id, username, now_ts(), student_id),
+            )
+            await conn.commit()
+        except sqlite3.IntegrityError as exc:
+            existing = await self.get_student_by_telegram(telegram_id)
+            if existing is not None and existing.id != student_id:
+                raise AlreadyBoundError(
+                    "Этот Telegram уже привязан к другому студенту"
+                ) from exc
+            target = await self.get_student(student_id)
+            if (
+                target is not None
+                and target.telegram_id is not None
+                and target.telegram_id != telegram_id
+            ):
+                raise StudentTakenError("Этот человек уже зарегистрирован") from exc
+            raise
         bound = await self.get_student(student_id)
         assert bound is not None
         return bound
+
+    async def unbind_telegram(self, student_id: int) -> Student:
+        conn = self._require()
+        target = await self.get_student(student_id)
+        if target is None:
+            raise HomeworkNotFoundError("Студент не найден")
+        await conn.execute(
+            """
+            UPDATE students
+            SET telegram_id = NULL, telegram_username = NULL
+            WHERE id = ?
+            """,
+            (student_id,),
+        )
+        await conn.commit()
+        student = await self.get_student(student_id)
+        if student is None:
+            raise HomeworkNotFoundError("Студент не найден")
+        return student
 
     async def upsert_lesson(self, lesson: CourseLesson) -> Literal["created", "updated", "unchanged"]:
         existing = await self.get_lesson_by_code(lesson.code)
@@ -552,8 +606,7 @@ class Database:
         _ = active_only
         return await self.list_assessments(submit_via_bot=True)
 
-    async def homeworks_for_group(self, group_code: str) -> list[Assessment]:
-        _ = group_code
+    async def submittable_assessments(self) -> list[Assessment]:
         return await self.list_assessments(submit_via_bot=True)
 
     async def get_lesson(self, lesson_id: int) -> Lesson | None:
@@ -586,6 +639,26 @@ class Database:
         row = await cursor.fetchone()
         assert row is not None
         return int(row["n"])
+
+    async def latest_submissions_map(self) -> dict[tuple[int, int], Submission]:
+        conn = self._require()
+        cursor = await conn.execute(
+            """
+            SELECT s.*
+            FROM submissions s
+            INNER JOIN (
+                SELECT student_id, assessment_id, MAX(id) AS max_id
+                FROM submissions
+                GROUP BY student_id, assessment_id
+            ) latest
+                ON latest.max_id = s.id
+            """
+        )
+        result: dict[tuple[int, int], Submission] = {}
+        for row in await cursor.fetchall():
+            submission = _submission_from_row(row)
+            result[(submission.assessment_id, submission.student_id)] = submission
+        return result
 
     async def latest_submission(
         self, student_id: int, assessment_id: int
@@ -659,6 +732,8 @@ class Database:
         if assessment is None or not assessment.active:
             raise HomeworkNotFoundError("Задание не найдено")
         moment = now_ts() if submitted_at is None else submitted_at
+        if assessment.issued_at is not None and moment < assessment.issued_at:
+            raise NotIssuedError(assessment.issued_at)
         close_ts = assessment.accept_until_ts
         if close_ts is not None and not is_deadline_open(close_ts, moment):
             raise DeadlineClosedError("Приём уже закрыт")

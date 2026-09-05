@@ -6,6 +6,31 @@ from zoneinfo import ZoneInfo
 from hwbot.config import MOSCOW_TZ
 
 DEADLINE_FORMATS = ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%d.%m.%Y %H:%M")
+MONTHS_GENITIVE = (
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+WEEKDAYS_PREPOSITIONAL = (
+    "понедельникам",
+    "вторникам",
+    "средам",
+    "четвергам",
+    "пятницам",
+    "субботам",
+    "воскресеньям",
+)
+QUIET_START_HOUR = 23
+QUIET_END_HOUR = 10
 
 
 def zone(name: str = MOSCOW_TZ) -> ZoneInfo:
@@ -38,6 +63,47 @@ def parse_deadline(raw: str, tz_name: str = MOSCOW_TZ) -> int:
 
 def format_dt(ts: int, tz_name: str = MOSCOW_TZ) -> str:
     return datetime.fromtimestamp(ts, zone(tz_name)).strftime("%d.%m.%Y %H:%M")
+
+
+def format_human_dt(ts: int, tz_name: str = MOSCOW_TZ) -> str:
+    moment = datetime.fromtimestamp(ts, zone(tz_name))
+    return (
+        f"{moment.day} {MONTHS_GENITIVE[moment.month - 1]}, "
+        f"{moment.strftime('%H:%M')}"
+    )
+
+
+def format_human_day(ts: int, tz_name: str = MOSCOW_TZ) -> str:
+    moment = datetime.fromtimestamp(ts, zone(tz_name))
+    return f"{moment.day} {MONTHS_GENITIVE[moment.month - 1]}"
+
+
+def format_human_clock(ts: int, tz_name: str = MOSCOW_TZ) -> str:
+    return datetime.fromtimestamp(ts, zone(tz_name)).strftime("%H:%M")
+
+
+def format_human_datetime(ts: int, tz_name: str = MOSCOW_TZ) -> str:
+    moment = datetime.fromtimestamp(ts, zone(tz_name))
+    return (
+        f"{moment.day} {MONTHS_GENITIVE[moment.month - 1]} "
+        f"в {moment.strftime('%H:%M')}"
+    )
+
+
+def is_same_calendar_day(left: int, right: int, tz_name: str = MOSCOW_TZ) -> bool:
+    first = datetime.fromtimestamp(left, zone(tz_name)).date()
+    second = datetime.fromtimestamp(right, zone(tz_name)).date()
+    return first == second
+
+
+def weekday_prepositional(ts: int, tz_name: str = MOSCOW_TZ) -> str:
+    moment = datetime.fromtimestamp(ts, zone(tz_name))
+    return WEEKDAYS_PREPOSITIONAL[moment.weekday()]
+
+
+def is_quiet_hours(now: int, tz_name: str = MOSCOW_TZ) -> bool:
+    hour = datetime.fromtimestamp(now, zone(tz_name)).hour
+    return hour >= QUIET_START_HOUR or hour < QUIET_END_HOUR
 
 
 def is_deadline_open(deadline_ts: int, now: int | None = None) -> bool:
