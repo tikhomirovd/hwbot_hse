@@ -82,8 +82,7 @@ async def cmd_list_hw() -> int:
             print("ДЗ нет")
             return 0
         for hw in homeworks:
-            groups = ",".join(hw.group_codes)
-            print(f"#{hw.id}\t{hw.title}\t{groups}\t{hw.deadline_ts}")
+            print(f"#{hw.id}\t{hw.code}\t{hw.title}\t{hw.deadline_ts}")
         return 0
     finally:
         await db.close()

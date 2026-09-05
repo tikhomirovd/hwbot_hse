@@ -39,7 +39,7 @@ async def test_bind_and_submit_before_deadline(seeded: Database) -> None:
     assert latest.id == submission.id
 
 
-async def test_reject_late_submission(seeded: Database) -> None:
+async def test_accept_after_deadline_before_accept_until(seeded: Database) -> None:
     students = await seeded.list_students()
     student = next(item for item in students if item.group_code == "БАЦРФ261")
     homework = await seeded.create_homework(
@@ -49,11 +49,33 @@ async def test_reject_late_submission(seeded: Database) -> None:
         group_codes=("БАЦРФ261",),
         created_at=1,
     )
+    submission = await seeded.add_submission(
+        student.id, homework.id, "https://github.com/x", submitted_at=1_001
+    )
+    assert submission.payload.startswith("https://github.com")
+
+
+async def test_reject_after_accept_until(seeded: Database) -> None:
+    students = await seeded.list_students()
+    student = next(item for item in students if item.group_code == "БАЦРФ261")
+    homework = await seeded.create_homework(
+        "ДЗ closed",
+        "text",
+        deadline_ts=1_000,
+        group_codes=("БАЦРФ261",),
+        created_at=1,
+    )
+    assert homework.accept_until_ts is not None
     with pytest.raises(DeadlineClosedError):
-        await seeded.add_submission(student.id, homework.id, "https://github.com/x", submitted_at=1_001)
+        await seeded.add_submission(
+            student.id,
+            homework.id,
+            "https://github.com/x",
+            submitted_at=homework.accept_until_ts + 1,
+        )
 
 
-async def test_status_zero_for_missing(seeded: Database) -> None:
+async def test_status_open_for_missing(seeded: Database) -> None:
     homework = await seeded.create_homework(
         "ДЗ status",
         "text",
@@ -62,5 +84,5 @@ async def test_status_zero_for_missing(seeded: Database) -> None:
         created_at=1,
     )
     rows = await seeded.homework_status(homework.id)
-    assert all(row.status_label == "не сдано (0)" for row in rows)
-    assert len(rows) == 28
+    assert all(row.status_label == "не сдано" for row in rows)
+    assert len(rows) == 57

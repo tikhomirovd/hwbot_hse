@@ -191,11 +191,11 @@ async def cmd_hw(message: Message, db: Database) -> None:
         await message.answer("Сначала зарегистрируйся: /start")
         return
     now = now_ts()
-    homeworks = await db.homeworks_for_group(student.group_code)
+    assessments = await db.homeworks_for_group(student.group_code)
     cards: list[str] = []
-    for homework in homeworks:
-        submission = await db.latest_submission(student.id, homework.id)
-        cards.append(format_homework_card(homework, submission, now))
+    for assessment in assessments:
+        submission = await db.latest_submission(student.id, assessment.id)
+        cards.append(format_homework_card(assessment, submission, now))
     await message.answer(format_hw_list(cards))
 
 
@@ -213,7 +213,8 @@ async def cmd_mysubmissions(message: Message, db: Database) -> None:
         return
     now = now_ts()
     cards = [
-        format_homework_card(homework, submission, now) for homework, submission in items
+        format_homework_card(assessment, submission, now)
+        for assessment, submission in items
     ]
     await message.answer(format_hw_list(cards))
 
@@ -228,23 +229,23 @@ async def cmd_submit(message: Message, state: FSMContext, db: Database) -> None:
         return
     now = now_ts()
     open_homeworks = [
-        hw
-        for hw in await db.homeworks_for_group(student.group_code)
-        if hw.deadline_ts >= now
+        item
+        for item in await db.homeworks_for_group(student.group_code)
+        if item.accept_until_ts is None or item.accept_until_ts >= now
     ]
     if not open_homeworks:
         await message.answer(
-            "Сейчас нет открытых ДЗ. Если дедлайн уже прошёл — сдать нельзя, будет 0."
+            "Сейчас нет открытых работ. Если приём закрыт — будет 0."
         )
         return
     buttons = [
         [
             InlineKeyboardButton(
-                text=f"#{hw.id} {hw.title}",
-                callback_data=PickHw(homework_id=hw.id).pack(),
+                text=f"#{item.id} {item.label}",
+                callback_data=PickHw(homework_id=item.id).pack(),
             )
         ]
-        for hw in open_homeworks
+        for item in open_homeworks
     ]
     await message.answer(
         "Какое ДЗ сдаёшь?",
@@ -271,9 +272,9 @@ async def pick_homework(
         await callback.answer("Задание не найдено", show_alert=True)
         return
     now = now_ts()
-    if homework.deadline_ts < now:
+    if homework.accept_until_ts is not None and homework.accept_until_ts < now:
         await message.edit_text(
-            f"Дедлайн по «{homework.title}» уже прошёл. Задание закрыто, оценка 0."
+            f"Приём по «{homework.title}» уже закрыт. Оценка 0."
         )
         await callback.answer()
         return
@@ -309,7 +310,7 @@ async def receive_submission(
         submission = await db.add_submission(student.id, homework_id, message.text)
     except DeadlineClosedError:
         await state.clear()
-        await message.answer("Дедлайн уже прошёл. Задание закрыто, оценка 0.")
+        await message.answer("Приём уже закрыт. Оценка 0.")
         return
     except HomeworkNotFoundError as exc:
         await state.clear()

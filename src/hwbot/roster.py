@@ -34,12 +34,20 @@ def load_roster(path: Path) -> list[RosterRow]:
             full_name = (raw.get("full_name") or "").strip()
             group_code = (raw.get("group_code") or "").strip()
             email = (raw.get("email") or "").strip().casefold()
+            seminar_raw = (raw.get("seminar_group") or "").strip()
             if not full_name or not group_code or not email:
                 raise RosterError(f"Пустая строка в ростере: строка {index}")
             if full_name in seen_names:
                 raise RosterError(f"Дубль ФИО: {full_name}")
             if email in seen_emails:
                 raise RosterError(f"Дубль почты: {email}")
+            seminar_group: str | None = None
+            if seminar_raw:
+                if seminar_raw not in {"А", "Б"}:
+                    raise RosterError(
+                        f"seminar_group должна быть А или Б, строка {index}"
+                    )
+                seminar_group = seminar_raw
             seen_names.add(full_name)
             seen_emails.add(email)
             rows.append(
@@ -47,6 +55,7 @@ def load_roster(path: Path) -> list[RosterRow]:
                     full_name=full_name,
                     group_code=canonical_group(group_code),
                     email=email,
+                    seminar_group=seminar_group,
                 )
             )
     if not rows:

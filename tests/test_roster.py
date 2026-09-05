@@ -29,6 +29,19 @@ def test_roster_rejects_birth_date(tmp_path: Path) -> None:
         load_roster(path)
 
 
+def test_optional_seminar_group(tmp_path: Path) -> None:
+    path = tmp_path / "roster.csv"
+    path.write_text(
+        "full_name,group_code,email,seminar_group\n"
+        "Иванов Иван Иванович,БАЦРФ261,a@edu.hse.ru,А\n"
+        "Петрова Анна Сергеевна,БАЦРФ262,b@edu.hse.ru,\n",
+        encoding="utf-8",
+    )
+    rows = load_roster(path)
+    assert rows[0].seminar_group == "А"
+    assert rows[1].seminar_group is None
+
+
 def test_real_roster_has_no_birth_column(roster_path: Path) -> None:
     text = roster_path.read_text(encoding="utf-8")
     assert "рождения" not in text.casefold()

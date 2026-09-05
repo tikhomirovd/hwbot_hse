@@ -3,11 +3,11 @@ from __future__ import annotations
 import csv
 import io
 
-from hwbot.models import Homework, HomeworkStatusRow
+from hwbot.models import Assessment, HomeworkStatusRow
 from hwbot.timeutil import format_dt
 
 
-def status_csv(homework: Homework, rows: list[HomeworkStatusRow]) -> str:
+def status_csv(assessment: Assessment, rows: list[HomeworkStatusRow]) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(
@@ -34,17 +34,17 @@ def status_csv(homework: Homework, rows: list[HomeworkStatusRow]) -> str:
                 row.status_label,
             ]
         )
-    _ = homework
+    _ = assessment
     return buffer.getvalue()
 
 
-def format_status_text(homework: Homework, rows: list[HomeworkStatusRow]) -> str:
+def format_status_text(assessment: Assessment, rows: list[HomeworkStatusRow]) -> str:
     done = [row for row in rows if row.submission is not None]
     missing = [row for row in rows if row.submission is None]
     lines = [
-        f"ДЗ #{homework.id} {homework.title}",
+        f"ДЗ #{assessment.id} {assessment.title}",
         f"Сдали: {len(done)} / {len(rows)}",
-        f"Не сдали (0): {len(missing)}",
+        f"Не сдали: {len(missing)}",
     ]
     if missing:
         lines.append("")

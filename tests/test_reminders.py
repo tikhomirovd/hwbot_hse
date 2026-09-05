@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hwbot.models import Homework, Student, Submission
+from hwbot.models import Assessment, Student, Submission
 from hwbot.reminders import WINDOW_12H, WINDOW_24H, collect_reminder_targets, reminder_window
 
 
@@ -15,15 +15,23 @@ def _student(student_id: int, telegram_id: int | None = 10) -> Student:
     )
 
 
-def _hw(deadline_ts: int) -> Homework:
-    return Homework(
+def _hw(deadline_ts: int) -> Assessment:
+    return Assessment(
         id=1,
+        code="hw1",
+        label="ДЗ-1",
         title="ДЗ 1",
         body="body",
+        component="homework",
+        weight_final=0.0625,
+        submit_via_bot=True,
+        issued_at=1,
         deadline_ts=deadline_ts,
-        group_codes=("БАЦРФ261",),
+        accept_until_ts=deadline_ts + 7 * 86400,
+        graded_on_ts=None,
+        late_rule="homework",
+        blocking=False,
         active=True,
-        created_at=1,
     )
 
 

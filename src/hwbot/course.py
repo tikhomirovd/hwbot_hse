@@ -163,14 +163,13 @@ def _parse_course(raw: Mapping[str, object]) -> Course:
     components = _parse_components(_table(raw.get("components"), "components"))
     scale = _parse_scale(_table(raw.get("attendance_scale"), "attendance_scale"))
     late_rules = _parse_late_rules(_table(raw.get("late_rules"), "late_rules"))
-    lessons_raw = raw.get("lessons")
-    if not isinstance(lessons_raw, list):
-        raise CourseError("Ожидался массив [[lessons]]")
-    lessons = tuple(_parse_lesson(item, tz_name) for item in lessons_raw)
-    assessments_raw = raw.get("assessments")
-    if not isinstance(assessments_raw, list):
-        raise CourseError("Ожидался массив [[assessments]]")
-    assessments = tuple(_parse_assessment(item, tz_name) for item in assessments_raw)
+    lessons = tuple(
+        _parse_lesson(item, tz_name) for item in _object_list(raw.get("lessons"), "[[lessons]]")
+    )
+    assessments = tuple(
+        _parse_assessment(item, tz_name)
+        for item in _object_list(raw.get("assessments"), "[[assessments]]")
+    )
     return Course(
         code=_str(meta.get("code"), "course.code"),
         title=_str(meta.get("title"), "course.title"),
@@ -219,9 +218,7 @@ def _parse_components(raw: Mapping[str, object]) -> tuple[Component, ...]:
 
 
 def _parse_scale(raw: Mapping[str, object]) -> AttendanceScale:
-    steps_raw = raw.get("steps")
-    if not isinstance(steps_raw, list):
-        raise CourseError("attendance_scale.steps должен быть массивом")
+    steps_raw = _object_list(raw.get("steps"), "attendance_scale.steps")
     steps: list[AttendanceStep] = []
     for index, item in enumerate(steps_raw):
         table = _table(item, f"attendance_scale.steps[{index}]")
@@ -317,9 +314,7 @@ def _parse_assessment(raw: object, tz_name: str) -> Assessment:
     criteria_raw = table.get("criteria")
     criteria: list[Criterion] = []
     if criteria_raw is not None:
-        if not isinstance(criteria_raw, list):
-            raise CourseError(f"{prefix}.criteria должен быть массивом")
-        for index, item in enumerate(criteria_raw):
+        for index, item in enumerate(_object_list(criteria_raw, f"{prefix}.criteria")):
             item_table = _table(item, f"{prefix}.criteria[{index}]")
             criteria.append(
                 Criterion(
@@ -477,6 +472,16 @@ def _to_start_of_day_ts(raw: object, tz_name: str, field: str) -> int:
     else:
         raise CourseError(f"{field} должен быть датой")
     return parse_local_date_time(day.isoformat(), "00:00", tz_name)
+
+
+def _object_list(raw: object, name: str) -> list[object]:
+    if not isinstance(raw, list):
+        raise CourseError(f"Ожидался массив {name}")
+    values = cast(list[object], raw)
+    items: list[object] = []
+    for index in range(len(values)):
+        items.append(values[index])
+    return items
 
 
 def _table(raw: object, name: str) -> dict[str, object]:
