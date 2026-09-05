@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
 from hwbot.notify import send_due_reminders
 from hwbot.ops import seed_course
 from hwbot.roster import load_roster
-from hwbot.config import PROJECT_ROOT
 from hwbot.timeutil import parse_deadline
 
 
@@ -17,12 +18,12 @@ class FakeBot:
         self.sent.append((chat_id, text))
 
 
-async def test_night_reminders_send_immediately(db: Database) -> None:
-    await db.seed_roster(load_roster(PROJECT_ROOT / "data" / "roster.csv"))
+async def test_night_reminders_send_immediately(db: Database, roster_path: Path) -> None:
+    await db.seed_roster(load_roster(roster_path))
     course = load_course(DEFAULT_COURSE_PATH)
     await seed_course(db, course)
     students = await db.list_students()
-    student = next(item for item in students if "Абрамова" in item.full_name)
+    student = next(item for item in students if "Иванов" in item.full_name)
     await db.bind_telegram(student.id, 999, "abra")
     hw1 = await db.get_assessment_by_code("hw1")
     assert hw1 is not None

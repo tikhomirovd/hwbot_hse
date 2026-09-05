@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
@@ -7,17 +9,16 @@ from hwbot.db import Database
 from hwbot.errors import DeadlineClosedError, NotIssuedError
 from hwbot.ops import seed_course
 from hwbot.roster import load_roster
-from hwbot.config import PROJECT_ROOT
 
 
 @pytest.fixture
-async def seeded(db: Database) -> Database:
-    await db.seed_roster(load_roster(PROJECT_ROOT / "data" / "roster.csv"))
+async def seeded(db: Database, roster_path: Path) -> Database:
+    await db.seed_roster(load_roster(roster_path))
     return db
 
 
 async def test_seed_count(seeded: Database) -> None:
-    assert await seeded.student_count() == 57
+    assert await seeded.student_count() == 4
     students = await seeded.list_students()
     assert {item.seminar_group for item in students if item.group_code == "БАЦРФ261"} == {
         "261"
@@ -29,7 +30,7 @@ async def test_seed_count(seeded: Database) -> None:
 
 async def test_bind_and_submit_before_deadline(seeded: Database) -> None:
     students = await seeded.list_students()
-    student = next(item for item in students if "Абрамова" in item.full_name)
+    student = next(item for item in students if "Иванов" in item.full_name)
     bound = await seeded.bind_telegram(student.id, 111, "abra")
     assert bound.telegram_id == 111
     homework = await seeded.create_homework(
@@ -103,7 +104,7 @@ async def test_grade_set_updates(seeded: Database) -> None:
     course = load_course(DEFAULT_COURSE_PATH)
     await seed_course(seeded, course)
     students = await seeded.list_students()
-    student = next(item for item in students if "Абрамова" in item.full_name)
+    student = next(item for item in students if "Иванов" in item.full_name)
     assessment = await seeded.get_assessment_by_code("hw1")
     assert assessment is not None
     assert await seeded.set_grade(student.id, assessment.id, 8.5) == "created"
@@ -135,7 +136,7 @@ async def test_reject_before_issued_at(seeded: Database) -> None:
 
 async def test_bind_sets_registered_at(seeded: Database) -> None:
     students = await seeded.list_students()
-    student = next(item for item in students if "Абрамова" in item.full_name)
+    student = next(item for item in students if "Иванов" in item.full_name)
     bound = await seeded.bind_telegram(student.id, 222, "abra")
     assert bound.registered_at is not None
     await seeded.unbind_telegram(student.id)
@@ -154,4 +155,4 @@ async def test_status_open_for_missing(seeded: Database) -> None:
     )
     rows = await seeded.homework_status(homework.id)
     assert all(row.status_label == "не сдано" for row in rows)
-    assert len(rows) == 57
+    assert len(rows) == 4

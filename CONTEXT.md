@@ -5,8 +5,12 @@ Telegram-бот сбора ДЗ и оценки для 1 курса БАЦРФ (
 баллы и три числа оценки в прямом эфире.
 
 Календарь и веса — в `data/course.toml`. Формулы — только в `src/hwbot/grading.py`.
-ТЗ оценивания — в [GRADING-SPEC.md](GRADING-SPEC.md). Тексты и сценарии — в
-[UX-SPEC.md](UX-SPEC.md).
+Живая ведомость — `data/roster.csv` (не в git). Образец — `data/roster.example.csv`.
+
+Публичный репозиторий: `https://github.com/tikhomirovd/hwbot_hse`.
+Ветки и PR идут в `main`. Принять работу студента: `gh pr checkout N` и `gh pr merge`.
+Локальный remote `backup` → `/root/backups/hwbot.git` (`git push backup HEAD`) —
+архив со старыми хешами, на GitHub его не пушить.
 
 ## Где крутится
 
@@ -17,7 +21,6 @@ Telegram-бот сбора ДЗ и оценки для 1 курса БАЦРФ (
 - Список студентов: `/root/hwbot/data/roster.csv` (ФИО, группа, почта; seminar_group
   берётся из group_code: 261 / 262; без дат рождения)
 - Бэкап базы: cron `17 4 * * * /root/hwbot/deploy/backup-db.sh` → `/root/backups/bot-YYYY-MM-DD.db`
-- Локальный remote кода: `backup` → `/root/backups/hwbot.git` (`git push backup HEAD`)
 
 Рестарт:
 
@@ -51,8 +54,6 @@ journalctl -u hwbot -f
 - Баллы через CLI не рассылаются: студент смотрит `/grade`.
 - Преподаватель обычно не жмёт кнопки в Telegram: просит в Cursor «сделай рассылку» /
   «выгрузи» / «поставь баллы».
-
-Админ Telegram id: `206078247`.
 
 ## Команды студентов
 
@@ -98,7 +99,7 @@ uv run hwbot export --hw 1 --out /tmp/hw-1.csv
 uv run hwbot list-hw
 ```
 
-`hwbot students` без флага печатает `зарегистрировано N из 57` и список тех, кто ещё не зашёл.
+`hwbot students` без флага печатает `зарегистрировано N из M` и список тех, кто ещё не зашёл.
 
 Дедлайн в `Europe/Moscow`.
 
@@ -117,9 +118,7 @@ uv run hwbot list-hw
 - Не показывать студенту чужие баллы, рейтинг или среднее по курсу
 - Не дублировать формулу оценки вне `grading.py`
 - Не добавлять постоянную клавиатуру
-- Не заводить новых эмодзи вне словаря UX-SPEC §6
-- Не превращать пакет в RAG/агента/общий GigaChat SDK
-- Не коммитить `.env` и `data/bot.db`
+- Не коммитить `.env`, `data/bot.db` и живую `data/roster.csv`
 
 ## Стек
 

@@ -25,8 +25,8 @@ def test_status_csv_and_text() -> None:
         blocking=False,
         active=True,
     )
-    done = Student(1, "Абрамова Анастасия Романовна", "БАЦРФ261", "a@edu.hse.ru", 1, "a")
-    missing = Student(2, "Губарев Ярослав Игоревич", "БАЦРФ261", "b@edu.hse.ru", None, None)
+    done = Student(1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", 1, "a")
+    missing = Student(2, "Петрова Анна Сергеевна", "БАЦРФ261", "petrova@example.edu", None, None)
     rows = [
         HomeworkStatusRow(
             student=done,
@@ -47,7 +47,7 @@ def test_status_csv_and_text() -> None:
     assert "https://github.com/x" in csv_text
     text = format_status_text(homework, rows)
     assert "Сдали: 1 / 2" in text
-    assert "Губарев" in text
+    assert "Петрова" in text
 
 
 def test_gradebook_empty_rows() -> None:

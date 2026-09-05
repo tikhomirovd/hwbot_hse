@@ -189,7 +189,7 @@ def test_empty_hw_explains_week0() -> None:
     line = week0_one_liner([homework])
     assert "ДЗ-1" in line
     student = Student(
-        1, "Абрамова Анастасия Романовна", "БАЦРФ261", "a@edu.hse.ru", None, None
+        1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", None, None
     )
     done = register_done(student, [homework])
     assert "/mysubmissions" in done

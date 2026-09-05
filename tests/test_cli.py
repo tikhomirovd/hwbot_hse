@@ -36,15 +36,15 @@ def test_broadcast_and_students_parsers() -> None:
 
 
 def test_students_listing_counts() -> None:
-    bound = Student(1, "Абрамова Анастасия Романовна", "БАЦРФ261", "a@edu.hse.ru", 1, "a")
-    free = Student(2, "Губарев Ярослав Игоревич", "БАЦРФ261", "b@edu.hse.ru", None, None)
+    bound = Student(1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", 1, "a")
+    free = Student(2, "Петрова Анна Сергеевна", "БАЦРФ261", "petrova@example.edu", None, None)
     text = format_students_listing([bound, free], registered=None)
     assert "зарегистрировано 1 из 2" in text
     assert "не зарегистрированы" in text
-    assert "Губарев" in text
-    assert "Абрамова" not in text
+    assert "Петрова" in text
+    assert "Иванов" not in text
     missing = format_students_listing([bound, free], registered=False)
     assert "не зарегистрированы: 1 из 2" in missing
     registered = format_students_listing([bound, free], registered=True)
-    assert "Абрамова" in registered
-    assert "Губарев" not in registered
+    assert "Иванов" in registered
+    assert "Петрова" not in registered

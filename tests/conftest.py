@@ -5,15 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from hwbot.config import PROJECT_ROOT
 from hwbot.db import Database
 from hwbot.models import Student
 from hwbot.roster import load_roster
 
+FIXTURE_ROSTER = Path(__file__).resolve().parent / "fixtures" / "roster.csv"
+
 
 @pytest.fixture
 def roster_path() -> Path:
-    return PROJECT_ROOT / "data" / "roster.csv"
+    return FIXTURE_ROSTER
 
 
 @pytest.fixture
