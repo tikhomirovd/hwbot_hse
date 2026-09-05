@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
 from hwbot.errors import DeadlineClosedError
+from hwbot.ops import seed_course
 from hwbot.roster import load_roster
 from hwbot.config import PROJECT_ROOT
 
@@ -73,6 +75,36 @@ async def test_reject_after_accept_until(seeded: Database) -> None:
             "https://github.com/x",
             submitted_at=homework.accept_until_ts + 1,
         )
+
+
+async def test_seed_course_idempotent(db: Database) -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    first = await seed_course(db, course)
+    assert first.created_lessons == 36
+    assert first.created_assessments == 11
+    assert first.updated_lessons == 0
+    second = await seed_course(db, course)
+    assert second.created_lessons == 0
+    assert second.updated_lessons == 0
+    assert second.created_assessments == 0
+    assert second.updated_assessments == 0
+    assert await db.count_lessons() == 36
+    assert await db.count_assessments() == 11
+
+
+async def test_grade_set_updates(seeded: Database) -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    await seed_course(seeded, course)
+    students = await seeded.list_students()
+    student = next(item for item in students if "Абрамова" in item.full_name)
+    assessment = await seeded.get_assessment_by_code("hw1")
+    assert assessment is not None
+    assert await seeded.set_grade(student.id, assessment.id, 8.5) == "created"
+    assert await seeded.set_grade(student.id, assessment.id, 9.0, "ок") == "updated"
+    grade = await seeded.get_grade(student.id, assessment.id)
+    assert grade is not None
+    assert grade.score == 9.0
+    assert grade.comment == "ок"
 
 
 async def test_status_open_for_missing(seeded: Database) -> None:

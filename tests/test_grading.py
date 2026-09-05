@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hwbot.course import DEFAULT_COURSE_PATH, load_course
+from hwbot.course import DEFAULT_COURSE_PATH, LateRule, load_course
 from hwbot.grading import (
     ItemResult,
     ItemStatus,
@@ -21,8 +21,8 @@ from hwbot.timeutil import parse_deadline
 
 COURSE = load_course(DEFAULT_COURSE_PATH)
 SCALE = COURSE.attendance_scale
-HW_RULE = COURSE.late_rule_named("homework")
-PROJECT_RULE = COURSE.late_rule_named("project1")
+HW_RULE = LateRule("homework", 1.0, 4.0, 7, 7)
+PROJECT_RULE = LateRule("project1", 1.0, 0.0, 0, None)
 
 
 def test_attendance_table() -> None:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from hwbot.export import format_status_text, status_csv
+from hwbot.course import DEFAULT_COURSE_PATH, load_course
+from hwbot.export import format_status_text, gradebook_csv, status_csv
+from hwbot.grading import StudentState, build_report
 from hwbot.models import Assessment, HomeworkStatusRow, Student, Submission
+from hwbot.timeutil import parse_deadline
 
 
 def test_status_csv_and_text() -> None:
@@ -45,3 +48,18 @@ def test_status_csv_and_text() -> None:
     text = format_status_text(homework, rows)
     assert "Сдали: 1 / 2" in text
     assert "Губарев" in text
+
+
+def test_gradebook_empty_rows() -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    student = Student(1, "Тест Тестов", "БАЦРФ261", "t@edu.hse.ru", None, None, "Б")
+    report = build_report(
+        StudentState("Б", {}, frozenset(), {}, {}),
+        course,
+        parse_deadline("2026-09-06 12:00"),
+    )
+    text = gradebook_csv(course, [(student, report)])
+    assert "ФИО" in text
+    assert "ДЗ-1" in text
+    assert "Идёшь на" in text
+    assert "Тест Тестов" in text
