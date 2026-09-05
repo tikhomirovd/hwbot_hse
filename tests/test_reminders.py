@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from hwbot.models import Assessment, Student, Submission
-from hwbot.reminders import WINDOW_12H, WINDOW_24H, collect_reminder_targets, reminder_window
+from hwbot.reminders import (
+    WINDOW_12H,
+    WINDOW_24H,
+    WINDOW_ACCEPT_CLOSING,
+    WINDOW_DEADLINE_PASSED,
+    collect_reminder_targets,
+    reminder_window,
+)
 
 
 def _student(student_id: int, telegram_id: int | None = 10) -> Student:
@@ -72,6 +79,26 @@ def test_skip_submitted_and_already_sent() -> None:
     )
     assert len(targets) == 1
     assert targets[0].window == WINDOW_24H
+
+
+def test_deadline_passed_and_accept_closing() -> None:
+    deadline = 100_000
+    homework = _hw(deadline)
+    student = _student(5)
+    now = deadline + 10
+    targets = collect_reminder_targets(
+        [homework], [student], {}, set(), now_ts=now
+    )
+    windows = {target.window for target in targets}
+    assert WINDOW_DEADLINE_PASSED in windows
+    closing_now = homework.accept_until_ts - 10 * 3600 if homework.accept_until_ts else now
+    assert homework.accept_until_ts is not None
+    targets = collect_reminder_targets(
+        [homework], [student], {}, set(), now_ts=closing_now
+    )
+    windows = {target.window for target in targets}
+    assert WINDOW_ACCEPT_CLOSING in windows
+    assert WINDOW_DEADLINE_PASSED in windows
 
 
 def test_unregistered_students_are_skipped() -> None:

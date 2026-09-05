@@ -17,17 +17,33 @@ from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import (
     AlreadyBoundError,
+    CourseError,
     DeadlineClosedError,
     HomeworkNotFoundError,
     StudentTakenError,
 )
+from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.formatting import (
+    format_attendance_list,
+    format_grade_report,
     format_homework_card,
     format_hw_list,
+    format_late_warning,
     format_profile,
+    format_score,
     help_text,
 )
+from hwbot.grading import (
+    attendance_percent,
+    attendance_score,
+    build_item,
+    build_report,
+    days_late,
+    late_cap,
+    student_lessons,
+)
 from hwbot.matching import match_students
+from hwbot.ops import build_student_state
 from hwbot.timeutil import now_ts
 
 router = Router()
@@ -212,10 +228,27 @@ async def cmd_mysubmissions(message: Message, db: Database) -> None:
         await message.answer("Ты ещё ничего не сдавал.")
         return
     now = now_ts()
-    cards = [
-        format_homework_card(assessment, submission, now)
-        for assessment, submission in items
-    ]
+    course = load_course(DEFAULT_COURSE_PATH)
+    known = {entry.code: entry for entry in course.assessments}
+    cards: list[str] = []
+    for assessment, submission in items:
+        card = format_homework_card(assessment, submission, now)
+        grade = await db.get_grade(student.id, assessment.id)
+        if grade is not None:
+            course_item = known.get(assessment.code)
+            if course_item is not None:
+                item = build_item(
+                    course_item, course, now, submission.submitted_at, grade.score
+                )
+                card += f"\nБалл: {format_score(item.applied_score)}"
+                if item.days_late > 0 and item.cap is not None:
+                    card += (
+                        f" (сдано с опозданием на {item.days_late} дн., "
+                        f"потолок {format_score(item.cap)})"
+                    )
+            else:
+                card += f"\nБалл: {format_score(grade.score)}"
+        cards.append(card)
     await message.answer(format_hw_list(cards))
 
 
@@ -280,10 +313,20 @@ async def pick_homework(
         return
     await state.set_state(SubmitStates.waiting_payload)
     await state.update_data(homework_id=homework.id)
-    await message.edit_text(
+    prompt = (
         f"Ок, «{homework.title}». Пришли ссылку на GitHub или любой текст сдачи.\n"
         "Отмена: /cancel"
     )
+    if homework.deadline_ts is not None and now > homework.deadline_ts:
+        course = load_course(DEFAULT_COURSE_PATH)
+        try:
+            rule = course.late_rule_named(homework.late_rule)
+        except CourseError:
+            rule = course.late_rule_named("homework")
+        late_days = days_late(now, homework.deadline_ts)
+        cap = late_cap(rule, late_days)
+        prompt = f"{format_late_warning(late_days, cap)}\n\n{prompt}"
+    await message.edit_text(prompt)
     await callback.answer()
 
 
@@ -323,6 +366,56 @@ async def receive_submission(
     await state.clear()
     title = homework.title if homework is not None else "ДЗ"
     await message.answer(f"Принял «{title}».\n{submission.payload}")
+
+
+@router.message(Command("grade"))
+async def cmd_grade(message: Message, db: Database) -> None:
+    if message.from_user is None:
+        return
+    student = await db.get_student_by_telegram(message.from_user.id)
+    if student is None:
+        await message.answer("Сначала зарегистрируйся: /start")
+        return
+    course = load_course(DEFAULT_COURSE_PATH)
+    state = await build_student_state(db, student, course)
+    report = build_report(state, course, now_ts())
+    await message.answer(format_grade_report(report, course))
+
+
+@router.message(Command("attendance"))
+async def cmd_attendance(message: Message, db: Database) -> None:
+    if message.from_user is None:
+        return
+    student = await db.get_student_by_telegram(message.from_user.id)
+    if student is None:
+        await message.answer("Сначала зарегистрируйся: /start")
+        return
+    course = load_course(DEFAULT_COURSE_PATH)
+    state = await build_student_state(db, student, course)
+    lessons = list(student_lessons(course, student.seminar_group))
+    present = 0
+    absent = 0
+    excused = 0
+    for lesson in lessons:
+        status = state.attendance.get(lesson.code)
+        if status == "present":
+            present += 1
+        elif status == "absent":
+            absent += 1
+        elif status == "excused":
+            excused += 1
+    percent = attendance_percent(present, absent, excused)
+    score = attendance_score(present, absent, excused, course.attendance_scale)
+    text = format_attendance_list(
+        lessons, dict(state.attendance), present, absent, excused, percent, score
+    )
+    if student.seminar_group is None:
+        text = (
+            "Семинарская группа не указана, посещаемость считаю только по лекциям. "
+            "Напиши преподавателю\n\n"
+            + text
+        )
+    await message.answer(text)
 
 
 @router.message(StateFilter(RegisterStates.waiting_identity))
