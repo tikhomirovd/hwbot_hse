@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from hwbot!")
+from __future__ import annotations
+
+__all__: list[str] = []
