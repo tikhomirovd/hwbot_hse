@@ -12,6 +12,7 @@ from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, status_csv
 from hwbot.groups import UnknownGroupError, parse_groups
 from hwbot.notify import broadcast_homework
+from hwbot.handlers.filters import PlainText
 from hwbot.timeutil import parse_deadline
 
 router = Router()
@@ -36,7 +37,7 @@ async def cmd_newhw(message: Message, state: FSMContext, settings: Settings) -> 
     await message.answer("Название ДЗ? Отмена: /cancel")
 
 
-@router.message(StateFilter(NewHwStates.title), F.text)
+@router.message(StateFilter(NewHwStates.title), F.text, PlainText())
 async def newhw_title(message: Message, state: FSMContext) -> None:
     if message.text is None:
         return
@@ -49,7 +50,7 @@ async def newhw_title(message: Message, state: FSMContext) -> None:
     await message.answer("Текст задания:")
 
 
-@router.message(StateFilter(NewHwStates.body), F.text)
+@router.message(StateFilter(NewHwStates.body), F.text, PlainText())
 async def newhw_body(message: Message, state: FSMContext) -> None:
     if message.text is None:
         return
@@ -62,7 +63,7 @@ async def newhw_body(message: Message, state: FSMContext) -> None:
     await message.answer("Дедлайн в Москве, например 2026-09-12 23:59")
 
 
-@router.message(StateFilter(NewHwStates.deadline), F.text)
+@router.message(StateFilter(NewHwStates.deadline), F.text, PlainText())
 async def newhw_deadline(message: Message, state: FSMContext) -> None:
     if message.text is None:
         return
@@ -76,7 +77,7 @@ async def newhw_deadline(message: Message, state: FSMContext) -> None:
     await message.answer("Группы: 261, 262 или обе 261,262")
 
 
-@router.message(StateFilter(NewHwStates.groups), F.text)
+@router.message(StateFilter(NewHwStates.groups), F.text, PlainText())
 async def newhw_groups(
     message: Message,
     state: FSMContext,

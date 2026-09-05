@@ -13,6 +13,7 @@ from aiogram.types import (
 from aiogram.filters.callback_data import CallbackData
 
 from hwbot.commands import setup_commands
+from hwbot.handlers.filters import PlainText
 from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import (
@@ -118,7 +119,7 @@ async def cmd_start(
     await message.answer(_not_registered_text())
 
 
-@router.message(StateFilter(RegisterStates.waiting_identity), F.text)
+@router.message(StateFilter(RegisterStates.waiting_identity), F.text, PlainText())
 async def register_identity(message: Message, state: FSMContext, db: Database) -> None:
     if message.text is None:
         return
@@ -330,7 +331,7 @@ async def pick_homework(
     await callback.answer()
 
 
-@router.message(StateFilter(SubmitStates.waiting_payload), F.text)
+@router.message(StateFilter(SubmitStates.waiting_payload), F.text, PlainText())
 async def receive_submission(
     message: Message,
     state: FSMContext,
