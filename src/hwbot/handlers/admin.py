@@ -12,8 +12,11 @@ from hwbot.export import format_status_text, status_csv
 router = Router()
 
 
-def _admin_ok(message: Message, settings: Settings) -> bool:
-    return message.from_user is not None and is_admin(message.from_user.id, settings)
+async def _admin_ok(message: Message, settings: Settings) -> bool:
+    if message.from_user is not None and is_admin(message.from_user.id, settings):
+        return True
+    await message.answer("Это команда преподавателя.")
+    return False
 
 
 async def _homework_from_command(
@@ -46,7 +49,7 @@ async def cmd_status(
     db: Database,
     settings: Settings,
 ) -> None:
-    if not _admin_ok(message, settings):
+    if not await _admin_ok(message, settings):
         return
     homework_id = await _homework_from_command(message, command, db)
     if homework_id is None:
@@ -69,7 +72,7 @@ async def cmd_missing(
     db: Database,
     settings: Settings,
 ) -> None:
-    if not _admin_ok(message, settings):
+    if not await _admin_ok(message, settings):
         return
     homework_id = await _homework_from_command(message, command, db)
     if homework_id is None:
@@ -99,7 +102,7 @@ async def cmd_export(
     db: Database,
     settings: Settings,
 ) -> None:
-    if not _admin_ok(message, settings):
+    if not await _admin_ok(message, settings):
         return
     homework_id = await _homework_from_command(message, command, db)
     if homework_id is None:

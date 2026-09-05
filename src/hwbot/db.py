@@ -221,6 +221,7 @@ class Database:
         await self._conn.executescript(SCHEMA)
         await self._ensure_seminar_group_column()
         await self._ensure_registered_at_column()
+        await self._normalize_seminar_groups()
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -289,6 +290,34 @@ class Database:
         if "registered_at" not in columns:
             await self._require().execute(
                 "ALTER TABLE students ADD COLUMN registered_at INTEGER"
+            )
+
+    async def _normalize_seminar_groups(self) -> None:
+        conn = self._require()
+        tables = await self._table_names()
+        if "students" in tables:
+            await conn.execute(
+                """
+                UPDATE students
+                SET seminar_group = CASE
+                    WHEN seminar_group IN ('А', 'A', 'а') THEN '261'
+                    WHEN seminar_group IN ('Б', 'B', 'б') THEN '262'
+                    WHEN group_code LIKE '%261' THEN '261'
+                    WHEN group_code LIKE '%262' THEN '262'
+                    ELSE seminar_group
+                END
+                WHERE seminar_group IS NULL
+                   OR seminar_group IN ('А', 'Б', 'A', 'B', 'а', 'б')
+                """
+            )
+        if "lessons" in tables:
+            await conn.execute(
+                "UPDATE lessons SET seminar_group = '261' "
+                "WHERE seminar_group IN ('А', 'A', 'а')"
+            )
+            await conn.execute(
+                "UPDATE lessons SET seminar_group = '262' "
+                "WHERE seminar_group IN ('Б', 'B', 'б')"
             )
 
     async def student_count(self) -> int:

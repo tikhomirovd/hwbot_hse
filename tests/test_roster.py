@@ -14,6 +14,8 @@ def test_load_real_roster(roster_path: Path) -> None:
     group_262 = [row for row in rows if row.group_code == "БАЦРФ262"]
     assert len(group_261) == 28
     assert len(group_262) == 29
+    assert all(row.seminar_group == "261" for row in group_261)
+    assert all(row.seminar_group == "262" for row in group_262)
     assert all("@" in row.email for row in rows)
     names = {row.full_name for row in rows}
     assert "Михайлов Фёдор Николаевич" in names
@@ -38,8 +40,8 @@ def test_optional_seminar_group(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     rows = load_roster(path)
-    assert rows[0].seminar_group == "А"
-    assert rows[1].seminar_group is None
+    assert rows[0].seminar_group == "261"
+    assert rows[1].seminar_group == "262"
 
 
 def test_real_roster_has_no_birth_column(roster_path: Path) -> None:

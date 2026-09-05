@@ -18,6 +18,13 @@ async def seeded(db: Database) -> Database:
 
 async def test_seed_count(seeded: Database) -> None:
     assert await seeded.student_count() == 57
+    students = await seeded.list_students()
+    assert {item.seminar_group for item in students if item.group_code == "БАЦРФ261"} == {
+        "261"
+    }
+    assert {item.seminar_group for item in students if item.group_code == "БАЦРФ262"} == {
+        "262"
+    }
 
 
 async def test_bind_and_submit_before_deadline(seeded: Database) -> None:

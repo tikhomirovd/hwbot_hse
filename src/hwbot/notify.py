@@ -15,7 +15,6 @@ from hwbot.reminders import (
     collect_reminder_targets,
     parse_late_days,
     reminder_text,
-    reminders_are_quiet,
 )
 from hwbot.timeutil import now_ts
 
@@ -70,8 +69,6 @@ async def send_due_reminders(
     course: Course | None = None,
 ) -> int:
     moment = now_ts() if now is None else now
-    if reminders_are_quiet(moment):
-        return 0
     loaded = course if course is not None else load_course(DEFAULT_COURSE_PATH)
     assessments = await db.list_assessments(submit_via_bot=True)
     students = await db.list_students()

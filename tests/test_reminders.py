@@ -71,10 +71,10 @@ def test_reached_windows_after_deadline() -> None:
     assert "late_2" in windows
 
 
-def test_quiet_hours_moscow() -> None:
+def test_quiet_hours_disabled() -> None:
     night = parse_deadline("2026-09-19 02:00")
     morning = parse_deadline("2026-09-19 10:00")
-    assert reminders_are_quiet(night)
+    assert not reminders_are_quiet(night)
     assert not reminders_are_quiet(morning)
 
 
@@ -230,7 +230,33 @@ def test_accept_closed_text() -> None:
     text = reminder_text(target)
     assert "закрыт" in text
     assert "0" in text
+    assert "25%" in text
     assert "Хоп" not in text
+
+
+def test_accept_closed_exam_text() -> None:
+    exam = Assessment(
+        id=2,
+        code="exam",
+        label="Экзамен",
+        title="Экзамен",
+        body="",
+        component="exam",
+        weight_final=0.30,
+        submit_via_bot=True,
+        issued_at=1,
+        deadline_ts=100_000,
+        accept_until_ts=100_000 + 7 * 86400,
+        graded_on_ts=None,
+        late_rule="none",
+        blocking=True,
+        active=True,
+    )
+    text = reminder_text(
+        ReminderTarget(assessment=exam, student=_student(5), window=WINDOW_ACCEPT_CLOSED)
+    )
+    assert "блокирующий" in text
+    assert "25%" not in text
 
 
 def test_late_day_text_includes_cap() -> None:

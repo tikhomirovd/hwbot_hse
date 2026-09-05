@@ -31,6 +31,7 @@ from hwbot.errors import (
 )
 from hwbot.formatting import (
     accept_closed_text,
+    accept_confirm_text,
     accepted_late,
     accepted_on_time,
     accepted_update,
@@ -64,6 +65,7 @@ from hwbot.formatting import (
     student_taken_text,
     stub_many_works,
     stub_one_work,
+    submit_button_text,
     submit_choose,
     submit_need_text,
     submit_prompt,
@@ -167,14 +169,35 @@ def _submit_keyboard(assessments: list[Assessment]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _card_keyboard(assessment: Assessment) -> InlineKeyboardMarkup:
+def _card_keyboard(
+    assessment: Assessment, *, submitted: bool = False
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"📤 Сдать {work_name(assessment)}",
+                    text=submit_button_text(assessment, submitted=submitted),
                     callback_data=PickHw(homework_id=assessment.id).pack(),
                 )
+            ]
+        ]
+    )
+
+
+def _accept_keyboard(assessment: Assessment) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, сдаю",
+                    callback_data=OfferSubmit(
+                        action="yes", homework_id=assessment.id
+                    ).pack(),
+                ),
+                InlineKeyboardButton(
+                    text="Нет, я просто так",
+                    callback_data=OfferSubmit(action="no", homework_id=0).pack(),
+                ),
             ]
         ]
     )
@@ -202,6 +225,23 @@ async def _prompt_for_homework(
         await message.edit_text(text)
     else:
         await message.answer(text)
+
+
+async def _ask_accept(
+    message: Message,
+    state: FSMContext,
+    homework: Assessment,
+    payload: str,
+    *,
+    edit: bool = False,
+) -> None:
+    await state.update_data(pending_payload=payload, homework_id=homework.id)
+    text = accept_confirm_text(homework, payload)
+    keyboard = _accept_keyboard(homework)
+    if edit:
+        await message.edit_text(text, reply_markup=keyboard)
+    else:
+        await message.answer(text, reply_markup=keyboard)
 
 
 async def _maybe_confirm_resubmit(
@@ -331,7 +371,17 @@ async def cmd_start(
         return
     student = await db.get_student_by_telegram(message.from_user.id)
     if student is not None:
-        await message.answer(format_profile(student, _course()))
+        now = now_ts()
+        open_now = _open_now(await _submittable(db), now)
+        upcoming = upcoming_assessments(await _submittable(db), now)
+        await message.answer(
+            format_profile(
+                student,
+                _course(),
+                upcoming=upcoming,
+                has_current=bool(open_now),
+            )
+        )
         return
     if is_admin(message.from_user.id, settings):
         if message.bot is not None:
@@ -413,7 +463,9 @@ async def _finish_bind(
         await callback.answer()
         return
     await state.clear()
-    await message.edit_text(register_done(student))
+    now = now_ts()
+    upcoming = upcoming_assessments(await _submittable(db), now)
+    await message.edit_text(register_done(student, upcoming))
     await callback.answer("Готово")
 
 
@@ -491,7 +543,11 @@ async def cmd_hw(message: Message, db: Database) -> None:
         )
         if index < len(current) - 1:
             card = f"{card}\n\n—————"
-        await answer_long(message, card, reply_markup=_card_keyboard(assessment))
+        await answer_long(
+            message,
+            card,
+            reply_markup=_card_keyboard(assessment, submitted=submission is not None),
+        )
     if upcoming:
         await answer_long(message, format_soon_block(upcoming))
 
@@ -578,13 +634,12 @@ async def pick_homework(
     data = await state.get_data()
     pending = data.get("pending_payload")
     if isinstance(pending, str) and pending.strip():
-        await state.update_data(pending_payload=None)
         if await _maybe_confirm_resubmit(
             message, state, db, student, homework, pending, now
         ):
             await callback.answer()
             return
-        await _store_submission(message, state, db, student, homework, pending, now)
+        await _ask_accept(message, state, homework, pending, edit=True)
         await callback.answer()
         return
     await _prompt_for_homework(message, state, homework, edit=True)
@@ -620,7 +675,7 @@ async def receive_submission(
         message, state, db, student, homework, message.text, now
     ):
         return
-    await _store_submission(message, state, db, student, homework, message.text, now)
+    await _ask_accept(message, state, homework, message.text)
 
 
 @router.callback_query(ConfirmResub.filter())
@@ -847,23 +902,10 @@ async def fallback_text(message: Message, state: FSMContext, db: Database) -> No
     await state.update_data(pending_payload=message.text)
     if len(open_homeworks) == 1:
         homework = open_homeworks[0]
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Да, сдаю",
-                        callback_data=OfferSubmit(
-                            action="yes", homework_id=homework.id
-                        ).pack(),
-                    ),
-                    InlineKeyboardButton(
-                        text="Нет, я просто так",
-                        callback_data=OfferSubmit(action="no", homework_id=0).pack(),
-                    ),
-                ]
-            ]
+        await message.answer(
+            stub_one_work(homework, message.text),
+            reply_markup=_accept_keyboard(homework),
         )
-        await message.answer(stub_one_work(homework, message.text), reply_markup=keyboard)
         return
     buttons = [
         [
@@ -883,7 +925,7 @@ async def fallback_text(message: Message, state: FSMContext, db: Database) -> No
         ]
     )
     await message.answer(
-        stub_many_works(),
+        stub_many_works(message.text),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 

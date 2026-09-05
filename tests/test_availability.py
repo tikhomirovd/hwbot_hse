@@ -70,7 +70,8 @@ def test_looks_like_submission() -> None:
     assert looks_like_submission("https://github.com/a/b", has_open_work=False)
     assert looks_like_submission("github.com/a/b", has_open_work=False)
     assert looks_like_submission("notebook.ipynb", has_open_work=False)
-    assert looks_like_submission("просто длинный текст сдачи", has_open_work=True)
+    assert looks_like_submission("git@github.com:a/b.git", has_open_work=False)
+    assert not looks_like_submission("просто длинный текст сдачи", has_open_work=True)
     assert not looks_like_submission("ок", has_open_work=True)
     assert not looks_like_submission("просто так", has_open_work=False)
 

@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-from hwbot.course import DEFAULT_COURSE_PATH, load_course
+from hwbot.course import DEFAULT_COURSE_PATH, LateRule, load_course
 from hwbot.formatting import (
+    accept_confirm_text,
     format_attendance_full_list,
     format_grade_report,
     format_homework_card,
+    format_hw_empty_soon,
+    format_profile,
     homework_status_for_student,
+    late_submit_warning,
+    new_homework_announcement,
+    register_done,
+    submit_button_text,
+    week0_one_liner,
 )
 from hwbot.grading import StudentState, build_report, count_attendance, student_lessons
-from hwbot.models import Assessment, Submission
+from hwbot.models import Assessment, Student, Submission
 from hwbot.telegramutil import escape_html
 from hwbot.timeutil import parse_deadline
 
@@ -50,13 +58,13 @@ def test_grade_report_november_text() -> None:
         lesson.code
         for lesson in course.lessons
         if lesson.starts_ts <= now
-        and (lesson.kind == "lecture" or lesson.seminar_group == "Б")
+        and (lesson.kind == "lecture" or lesson.seminar_group == "262")
     ]
     absent = {held[0], held[1]}
     hw2 = course.assessment_by_code("hw2")
     assert hw2.deadline_ts is not None
     state = StudentState(
-        seminar_group="Б",
+        seminar_group="262",
         attendance={code: ("absent" if code in absent else "present") for code in held},
         held_lesson_codes=frozenset(held),
         submissions={
@@ -88,6 +96,7 @@ def test_empty_grade_text() -> None:
     )
     text = format_grade_report(report, course)
     assert "считать пока нечего" in text.casefold()
+    assert "19 сентября" not in text
     assert "перекличк" not in text
     assert "напиши преподавателю" not in text.casefold()
 
@@ -103,7 +112,7 @@ def test_payload_with_html_is_escaped_in_card() -> None:
 def test_attendance_matches_grade_counts() -> None:
     course = load_course(DEFAULT_COURSE_PATH)
     now = parse_deadline("2026-10-10 12:00")
-    lessons = list(student_lessons(course, "Б"))
+    lessons = list(student_lessons(course, "262"))
     held = frozenset(
         lesson.code for lesson in lessons if lesson.starts_ts <= now
     )
@@ -126,8 +135,8 @@ def test_attendance_matches_grade_counts() -> None:
         report.attendance_excused,
     )
     partial_marks = {next(iter(held)): "present"} if held else {}
-    partial = StudentState("Б", partial_marks, held, {}, {})
-    lessons_b = list(student_lessons(course, "Б"))
+    partial = StudentState("262", partial_marks, held, {}, {})
+    lessons_b = list(student_lessons(course, "262"))
     present2, absent2, excused2 = count_attendance(
         lessons_b,
         partial.attendance,
@@ -144,7 +153,7 @@ def test_attendance_matches_grade_counts() -> None:
 
 def test_attendance_list_has_three_states() -> None:
     course = load_course(DEFAULT_COURSE_PATH)
-    lessons = list(student_lessons(course, "Б"))[:4]
+    lessons = list(student_lessons(course, "262"))[:4]
     held = frozenset({lessons[0].code, lessons[1].code, lessons[2].code})
     marks = {lessons[0].code: "present", lessons[1].code: "absent"}
     text = format_attendance_full_list(lessons, marks, held)
@@ -152,3 +161,111 @@ def test_attendance_list_has_three_states() -> None:
     assert "не был" in text
     assert "ещё впереди" in text
     assert "перекличк" not in text
+
+
+def test_empty_hw_explains_week0() -> None:
+    homework = _hw(parse_deadline("2026-09-19 23:59"))
+    homework = Assessment(
+        id=homework.id,
+        code=homework.code,
+        label=homework.label,
+        title=homework.title,
+        body=homework.body,
+        component=homework.component,
+        weight_final=homework.weight_final,
+        submit_via_bot=True,
+        issued_at=parse_deadline("2026-09-12 12:30"),
+        deadline_ts=homework.deadline_ts,
+        accept_until_ts=homework.accept_until_ts,
+        graded_on_ts=None,
+        late_rule=homework.late_rule,
+        blocking=False,
+        active=True,
+    )
+    text = format_hw_empty_soon([homework])
+    assert "12 сентября" in text
+    assert "лекции" in text
+    assert "/grade" in text
+    line = week0_one_liner([homework])
+    assert "ДЗ-1" in line
+    student = Student(
+        1, "Абрамова Анастасия Романовна", "БАЦРФ261", "a@edu.hse.ru", None, None
+    )
+    done = register_done(student, [homework])
+    assert "/mysubmissions" in done
+    assert "12 сентября" in done
+    profile = format_profile(student, upcoming=[homework], has_current=False)
+    assert "12 сентября" in profile
+
+
+def test_submit_button_and_accept_confirm() -> None:
+    homework = _hw(1000)
+    assert "Сдать" in submit_button_text(homework, submitted=False)
+    assert "Обновить" in submit_button_text(homework, submitted=True)
+    text = accept_confirm_text(homework, "https://github.com/a/b")
+    assert "открываться без логина" in text
+    assert "github.com/a/b" in text
+
+
+def test_exam_late_warning_has_no_daily_cut() -> None:
+    exam = Assessment(
+        id=11,
+        code="exam",
+        label="Экзамен",
+        title="Защита",
+        body="",
+        component="exam",
+        weight_final=0.30,
+        submit_via_bot=True,
+        issued_at=1,
+        deadline_ts=100,
+        accept_until_ts=200,
+        graded_on_ts=None,
+        late_rule="none",
+        blocking=True,
+        active=True,
+    )
+    rule = LateRule("none", 0.0, 0.0, 0, None)
+    text = late_submit_warning(exam, 2, 10.0, rule)
+    assert "штрафа за просрочку" in text.casefold()
+    assert "минус балл" not in text
+
+
+def test_announcement_week_only_when_span_is_week() -> None:
+    hw = _hw(parse_deadline("2026-09-19 23:59"))
+    short = Assessment(
+        id=1,
+        code="hw1",
+        label="ДЗ-1",
+        title="ДЗ 1",
+        body="",
+        component="homework",
+        weight_final=0.0625,
+        submit_via_bot=True,
+        issued_at=parse_deadline("2026-09-12 12:30"),
+        deadline_ts=parse_deadline("2026-09-19 23:59"),
+        accept_until_ts=hw.accept_until_ts,
+        graded_on_ts=None,
+        late_rule="homework",
+        blocking=False,
+        active=True,
+    )
+    long = Assessment(
+        id=2,
+        code="project1",
+        label="Проект 1",
+        title="Записка",
+        body="",
+        component="project1",
+        weight_final=0.20,
+        submit_via_bot=True,
+        issued_at=parse_deadline("2026-09-19 16:00"),
+        deadline_ts=parse_deadline("2026-10-25 23:59"),
+        accept_until_ts=parse_deadline("2026-11-01 23:59"),
+        graded_on_ts=None,
+        late_rule="project1",
+        blocking=False,
+        active=True,
+    )
+    assert "это неделя" in new_homework_announcement(short)
+    assert "это неделя" not in new_homework_announcement(long)

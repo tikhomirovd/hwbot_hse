@@ -383,7 +383,7 @@ def _validate_course(course: Course) -> None:
     if len(assessment_codes) != len(set(assessment_codes)):
         raise CourseError("Коды элементов контроля должны быть уникальны")
     lectures = [item for item in course.lessons if item.kind == "lecture"]
-    for group in ("А", "Б"):
+    for group in ("261", "262"):
         seminars = [
             item
             for item in course.lessons

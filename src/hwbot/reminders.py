@@ -8,7 +8,7 @@ from hwbot.formatting import format_cap, work_name
 from hwbot.grading import days_late, late_cap
 from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.telegramutil import escape_html
-from hwbot.timeutil import format_human_dt, is_quiet_hours
+from hwbot.timeutil import format_human_dt
 
 WINDOW_24H = "24h"
 WINDOW_12H = "12h"
@@ -160,10 +160,25 @@ def reminder_text(
             "📤 /submit"
         )
     if target.window == WINDOW_ACCEPT_CLOSED:
+        component = target.assessment.component
+        if component == "project1":
+            scale = (
+                "Это не приговор для курса: Проект 1 весит 20% накопленной. "
+                "Дальше есть где отыграть."
+            )
+        elif component == "exam":
+            scale = (
+                "Экзамен блокирующий: без него итоговая не сложится. "
+                "Если есть уважительная причина — напиши преподавателю."
+            )
+        else:
+            scale = (
+                "Это не приговор для курса: домашние задания весят 25% накопленной, "
+                "и это одна работа из четырёх. Дальше есть где отыграть."
+            )
         return (
             f"Приём по <b>{title}</b> закрыт, за неё стоит 0.\n\n"
-            "Это не приговор для курса: домашние задания весят 25% накопленной, "
-            "и это одна работа из четырёх. Дальше есть где отыграть.\n\n"
+            f"{scale}\n\n"
             "📊 Посмотреть, как это сказалось: /grade"
         )
     if target.window == WINDOW_ACCEPT_CLOSING:
@@ -212,4 +227,5 @@ def format_human_day_safe(ts: int | None) -> str:
 
 
 def reminders_are_quiet(now_ts: int) -> bool:
-    return is_quiet_hours(now_ts)
+    _ = now_ts
+    return False

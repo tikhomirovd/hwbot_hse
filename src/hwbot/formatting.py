@@ -62,6 +62,13 @@ def work_name(assessment: Assessment) -> str:
     return assessment.label or assessment.title
 
 
+def submit_button_text(assessment: Assessment, *, submitted: bool) -> str:
+    name = work_name(assessment)
+    if submitted:
+        return f"🔄 Обновить {name}"
+    return f"📤 Сдать {name}"
+
+
 def work_heading(assessment: Assessment) -> str:
     label = escape_html(work_name(assessment))
     title = escape_html(assessment.title)
@@ -166,21 +173,47 @@ def student_taken_text() -> str:
     )
 
 
-def register_done(student: Student) -> str:
+def week0_one_liner(upcoming: list[Assessment]) -> str:
+    if not upcoming:
+        return ""
+    first = upcoming[0]
+    name = escape_html(work_name(first))
+    when = (
+        format_human_day(first.issued_at)
+        if first.issued_at is not None
+        else "скоро"
+    )
+    return f"Сейчас сдавать нечего — {name} откроется {when}."
+
+
+def register_done(
+    student: Student, upcoming: list[Assessment] | None = None
+) -> str:
     name = escape_html(given_name(student.full_name))
+    soon = week0_one_liner(upcoming or [])
+    soon_block = f"{soon}\n\n" if soon else ""
     return (
         f"✅ Записал, {name}.\n\n"
+        f"{soon_block}"
         "Что тут есть:\n"
         "📌 /hw — что сдавать прямо сейчас\n"
         "📤 /submit — сдать работу\n"
+        "📎 /mysubmissions — что уже сдано\n"
         "📊 /grade — оценка и из чего она сложилась\n"
         "🗓 /attendance — посещаемость\n"
         "❓ /help — если что-то непонятно\n\n"
-        "Кстати, ссылку на работу можно просто прислать сюда сообщением — я пойму."
+        "Проверочные работы пишутся на лекции, через бота их сдавать не надо.\n"
+        "Ссылку на работу можно просто прислать сюда сообщением — я пойму."
     )
 
 
-def format_profile(student: Student, course: Course | None = None) -> str:
+def format_profile(
+    student: Student,
+    course: Course | None = None,
+    *,
+    upcoming: list[Assessment] | None = None,
+    has_current: bool = False,
+) -> str:
     lines = [
         f"Ты <b>{escape_html(student.full_name)}</b>, {escape_html(student.group_code)}."
     ]
@@ -188,6 +221,11 @@ def format_profile(student: Student, course: Course | None = None) -> str:
         extra = seminar_line(student, course)
         if extra is not None:
             lines.append(extra)
+    if not has_current:
+        soon = week0_one_liner(upcoming or [])
+        if soon:
+            lines.append("")
+            lines.append(soon)
     lines.extend(
         [
             "",
@@ -225,7 +263,9 @@ def help_text() -> str:
         "<b>Про оценку</b>\n\n"
         "Я показываю ровно те же числа, что стоят у преподавателя, и объясняю каждое. "
         "Видишь что-то странное — напиши, разберёмся.\n\n"
-        "Ссылку на работу можно просто прислать сюда сообщением, без команд."
+        "Ссылку на работу можно просто прислать сюда сообщением, без команд.\n\n"
+        "Файлы и скриншоты я не принимаю — нужна ссылка или текст.\n"
+        "Проверочные работы пишутся на лекции, через бота их сдавать не надо."
     )
 
 
@@ -287,15 +327,32 @@ def fallback_generic() -> str:
     )
 
 
+def repo_open_hint() -> str:
+    return "Репозиторий должен открываться без логина — ссылку не проверяю."
+
+
 def stub_one_work(assessment: Assessment, payload: str) -> str:
     return (
         f"Похоже на сдачу. Принять как <b>{escape_html(work_name(assessment))}</b>?\n\n"
-        f"{display_payload(payload)}"
+        f"{display_payload(payload)}\n\n"
+        f"{repo_open_hint()}"
     )
 
 
-def stub_many_works() -> str:
-    return "Похоже на сдачу. По какой работе?"
+def stub_many_works(payload: str = "") -> str:
+    extra = f"\n\n{display_payload(payload)}" if payload.strip() else ""
+    return (
+        f"Похоже на сдачу. По какой работе?{extra}\n\n"
+        f"{repo_open_hint()}"
+    )
+
+
+def accept_confirm_text(assessment: Assessment, payload: str) -> str:
+    return (
+        f"Принять как <b>{escape_html(work_name(assessment))}</b>?\n\n"
+        f"{display_payload(payload)}\n\n"
+        f"{repo_open_hint()}"
+    )
 
 
 def fallback_reply(text: str, open_works: list[Assessment]) -> str:
@@ -305,7 +362,7 @@ def fallback_reply(text: str, open_works: list[Assessment]) -> str:
         return fallback_generic()
     if len(open_works) == 1:
         return stub_one_work(open_works[0], text)
-    return stub_many_works()
+    return stub_many_works(text)
 
 
 def submit_prompt(assessment: Assessment) -> str:
@@ -338,6 +395,13 @@ def late_submit_warning(
         accept_line = (
             f"Приём закроется {format_human_dt(accept)}. После этого — 0.\n\n"
         )
+    if rule.per_day <= 0:
+        return (
+            f"⚠️ Дедлайн по {name} прошёл {days} {_days_word(days)} назад.\n\n"
+            "Штрафа за просрочку у этой работы нет: балл не срежется. "
+            f"{accept_line}"
+            "Присылай ссылку, если готов. Или /cancel."
+        )
     floor_line = ""
     if rule.floor > 0:
         floor_line = (
@@ -363,6 +427,7 @@ def resubmit_confirm(
         f"Ты уже сдал {name} <b>в срок</b>, {when}.\n\n"
         f"Новая версия считается по времени отправки — потолок станет "
         f"<b>{format_cap(new_cap)} из 10</b>. Прежнюю сдачу это заменит.\n\n"
+        f"{repo_open_hint()}\n\n"
         "Точно присылать?"
     )
 
@@ -546,7 +611,11 @@ def format_hw_empty_soon(upcoming: list[Assessment]) -> str:
     )
     return (
         "🎉 Сейчас сдавать нечего.\n\n"
-        f"Ближайшая работа — {name}, выдадим {when}. Напомню, когда появится."
+        f"Ближайшая работа — {name}, выдадим {when}. Напомню, когда появится.\n\n"
+        "Это бот курса: сюда сдаёшь работы ссылкой и смотришь свою оценку.\n"
+        "Проверочные работы пишутся на лекции, через бота их сдавать не надо.\n\n"
+        "📊 /grade — оценка\n"
+        "🗓 /attendance — посещаемость"
     )
 
 
@@ -668,8 +737,8 @@ def format_grade_report(report: GradeReport, course: Course) -> str:
     if report.heading_to is None and report.in_pocket is None:
         return (
             "📊 Считать пока нечего: ни одного балла и ни одной отметки о посещении.\n\n"
-            "Первые числа появятся после первой проверочной работы и первой отметки "
-            "о посещении на паре. Загляни сюда после 19 сентября."
+            "Первые числа появятся после первой отметки о посещении "
+            "или первого выставленного балла."
         )
     lines = [
         f"📊 <b>Твоя оценка на {format_day_month(report.as_of_ts)}</b>",
@@ -795,9 +864,17 @@ def new_homework_announcement(assessment: Assessment) -> str:
     )
     body = escape_html(assessment.body.strip()) if assessment.body.strip() else ""
     body_block = f"\n\n{body}" if body else ""
+    week_bit = "."
+    if (
+        assessment.issued_at is not None
+        and assessment.deadline_ts is not None
+    ):
+        span = assessment.deadline_ts - assessment.issued_at
+        if 5 * 86400 <= span <= 9 * 86400:
+            week_bit = " — это неделя."
     return (
         f"📌 Новая работа: <b>{work_heading(assessment)}</b>\n\n"
-        f"⏳ Сдать до {deadline} — это неделя.{body_block}\n\n"
+        f"⏳ Сдать до {deadline}{week_bit}{body_block}\n\n"
         "Работа одна для обеих групп. Подробности — на семинаре.\n\n"
         "📤 /submit"
     )

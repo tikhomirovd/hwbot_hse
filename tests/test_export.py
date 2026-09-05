@@ -52,9 +52,9 @@ def test_status_csv_and_text() -> None:
 
 def test_gradebook_empty_rows() -> None:
     course = load_course(DEFAULT_COURSE_PATH)
-    student = Student(1, "Тест Тестов", "БАЦРФ261", "t@edu.hse.ru", None, None, "Б")
+    student = Student(1, "Тест Тестов", "БАЦРФ261", "t@edu.hse.ru", None, None, "261")
     report = build_report(
-        StudentState("Б", {}, frozenset(), {}, {}),
+        StudentState("261", {}, frozenset(), {}, {}),
         course,
         parse_deadline("2026-09-06 12:00"),
     )

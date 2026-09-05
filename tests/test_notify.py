@@ -17,7 +17,7 @@ class FakeBot:
         self.sent.append((chat_id, text))
 
 
-async def test_quiet_hours_hold_and_flush_at_ten(db: Database) -> None:
+async def test_night_reminders_send_immediately(db: Database) -> None:
     await db.seed_roster(load_roster(PROJECT_ROOT / "data" / "roster.csv"))
     course = load_course(DEFAULT_COURSE_PATH)
     await seed_course(db, course)
@@ -28,12 +28,9 @@ async def test_quiet_hours_hold_and_flush_at_ten(db: Database) -> None:
     assert hw1 is not None
     assert hw1.deadline_ts is not None
     night = parse_deadline("2026-09-18 23:59")
-    ten = parse_deadline("2026-09-19 10:00")
     bot = FakeBot()
-    assert await send_due_reminders(bot, db, now=night, course=course) == 0
-    assert bot.sent == []
-    sent = await send_due_reminders(bot, db, now=ten, course=course)
+    sent = await send_due_reminders(bot, db, now=night, course=course)
     assert sent >= 1
     assert bot.sent
     second = FakeBot()
-    assert await send_due_reminders(second, db, now=ten, course=course) == 0
+    assert await send_due_reminders(second, db, now=night, course=course) == 0

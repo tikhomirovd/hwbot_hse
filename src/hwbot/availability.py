@@ -4,7 +4,14 @@ from collections.abc import Sequence
 
 from hwbot.models import Assessment, Submission
 
-SUBMISSION_MARKERS = ("http://", "https://", "github.com", "gitlab", ".ipynb")
+SUBMISSION_MARKERS = (
+    "http://",
+    "https://",
+    "github.com",
+    "gitlab",
+    "git@",
+    ".ipynb",
+)
 
 
 def is_issued(assessment: Assessment, now: int) -> bool:
@@ -45,11 +52,10 @@ def upcoming_assessments(
     return [item for item in assessments if is_upcoming(item, now)]
 
 
-def looks_like_submission(text: str, *, has_open_work: bool) -> bool:
+def looks_like_submission(text: str, *, has_open_work: bool = False) -> bool:
+    _ = has_open_work
     lowered = text.casefold()
-    if any(marker in lowered for marker in SUBMISSION_MARKERS):
-        return True
-    return has_open_work and len(text.strip()) > 10
+    return any(marker in lowered for marker in SUBMISSION_MARKERS)
 
 
 def would_lower_cap(

@@ -17,12 +17,12 @@ def test_load_real_course() -> None:
     seminars_a = [
         item
         for item in course.lessons
-        if item.kind == "seminar" and item.seminar_group == "А"
+        if item.kind == "seminar" and item.seminar_group == "261"
     ]
     seminars_b = [
         item
         for item in course.lessons
-        if item.kind == "seminar" and item.seminar_group == "Б"
+        if item.kind == "seminar" and item.seminar_group == "262"
     ]
     assert len(lectures) == 12
     assert len(seminars_a) == 12

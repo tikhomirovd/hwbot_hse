@@ -16,6 +16,7 @@ from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, gradebook_csv, status_csv
+from hwbot.groups import canonical_seminar_group
 from hwbot.notify import broadcast_text
 from hwbot.models import Student
 from hwbot.ops import (
@@ -75,19 +76,35 @@ async def cmd_broadcast(text: str) -> int:
         await db.close()
 
 
+def format_students_listing(
+    students: Sequence[Student], *, registered: bool | None
+) -> str:
+    bound = [item for item in students if item.telegram_id is not None]
+    missing = [item for item in students if item.telegram_id is None]
+    total = len(students)
+    if registered is True:
+        header = f"зарегистрировано {len(bound)} из {total}"
+        shown = bound
+    elif registered is False:
+        header = f"не зарегистрированы: {len(missing)} из {total}"
+        shown = missing
+    else:
+        header = f"зарегистрировано {len(bound)} из {total}"
+        shown = missing
+        if missing:
+            header = f"{header}\nне зарегистрированы:"
+    lines = [header]
+    for student in shown:
+        mark = "да" if student.telegram_id is not None else "нет"
+        lines.append(f"{student.full_name}\t{student.group_code}\t{mark}")
+    return "\n".join(lines)
+
+
 async def cmd_students(registered: bool | None) -> int:
     settings = load_settings()
     db = await _with_db(settings.db_path)
     try:
-        students = await db.list_students()
-        if registered is True:
-            students = [item for item in students if item.telegram_id is not None]
-        elif registered is False:
-            students = [item for item in students if item.telegram_id is None]
-        print(f"{len(students)}")
-        for student in students:
-            mark = "да" if student.telegram_id is not None else "нет"
-            print(f"{student.full_name}\t{student.group_code}\t{mark}")
+        print(format_students_listing(await db.list_students(), registered=registered))
         return 0
     finally:
         await db.close()
@@ -425,15 +442,17 @@ async def cmd_set_seminar_group(
         if not student_query or not group:
             print("Нужны --student и --group либо --from-roster", file=sys.stderr)
             return 1
-        if group not in {"А", "Б"}:
-            print("Группа должна быть А или Б", file=sys.stderr)
+        try:
+            seminar = canonical_seminar_group(group)
+        except ValueError:
+            print("Группа должна быть 261 или 262", file=sys.stderr)
             return 1
         matched = resolve_student(student_query, await db.list_students())
         if isinstance(matched, MatchFailure):
             print(f"{matched.query}: {matched.reason}", file=sys.stderr)
             return 1
-        await db.set_seminar_group(matched.id, group)
-        print(f"Семинарская группа {group}")
+        await db.set_seminar_group(matched.id, seminar)
+        print(f"Семинарская группа {seminar}")
         return 0
     finally:
         await db.close()

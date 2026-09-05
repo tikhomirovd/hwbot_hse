@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from hwbot.groups import canonical_group
+from hwbot.groups import canonical_group, canonical_seminar_group, seminar_from_group_code
 from hwbot.models import RosterRow
 
 FORBIDDEN_FIELDS = {"дата рождения", "date_of_birth", "dob", "birth_date"}
@@ -43,11 +43,14 @@ def load_roster(path: Path) -> list[RosterRow]:
                 raise RosterError(f"Дубль почты: {email}")
             seminar_group: str | None = None
             if seminar_raw:
-                if seminar_raw not in {"А", "Б"}:
+                try:
+                    seminar_group = canonical_seminar_group(seminar_raw)
+                except ValueError as exc:
                     raise RosterError(
-                        f"seminar_group должна быть А или Б, строка {index}"
-                    )
-                seminar_group = seminar_raw
+                        f"seminar_group должна быть 261 или 262, строка {index}"
+                    ) from exc
+            else:
+                seminar_group = seminar_from_group_code(canonical_group(group_code))
             seen_names.add(full_name)
             seen_emails.add(email)
             rows.append(

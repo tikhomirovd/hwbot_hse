@@ -137,7 +137,7 @@ def test_awaiting_excluded_from_heading() -> None:
 
 def test_empty_report() -> None:
     state = StudentState(
-        seminar_group="Б",
+        seminar_group="262",
         attendance={},
         held_lesson_codes=frozenset(),
         submissions={},
@@ -174,7 +174,7 @@ def _nov21_state() -> tuple[StudentState, int]:
             continue
         if lesson.kind == "lecture":
             held.append(lesson.code)
-        elif lesson.seminar_group == "Б":
+        elif lesson.seminar_group == "262":
             held.append(lesson.code)
     assert len(held) == 18
     absent = {held[0], held[1]}
@@ -184,7 +184,7 @@ def _nov21_state() -> tuple[StudentState, int]:
     hw2 = COURSE.assessment_by_code("hw2")
     assert hw2.deadline_ts is not None
     state = StudentState(
-        seminar_group="Б",
+        seminar_group="262",
         attendance=attendance,
         held_lesson_codes=frozenset(held),
         submissions={
