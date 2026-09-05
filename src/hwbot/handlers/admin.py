@@ -8,6 +8,7 @@ from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, status_csv
+from hwbot.formatting import format_students_report
 
 router = Router()
 
@@ -40,6 +41,23 @@ async def _homework_from_command(
     except ValueError:
         await message.answer("Нужен номер ДЗ, например /status 1")
         return None
+
+
+@router.message(Command("students"))
+async def cmd_students(
+    message: Message,
+    command: CommandObject,
+    db: Database,
+    settings: Settings,
+) -> None:
+    if not await _admin_ok(message, settings):
+        return
+    raw = (command.args or "").strip().casefold()
+    if raw and raw not in {"missing", "registered"}:
+        await message.answer("Напиши /students или /students missing")
+        return
+    students = await db.list_students()
+    await message.answer(format_students_report(students, registered=raw != "missing"))
 
 
 @router.message(Command("status"))

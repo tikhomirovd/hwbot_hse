@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from hwbot.availability import is_accept_open, is_current, is_upcoming, looks_like_submission
 from hwbot.course import Course, LateRule, Lesson as CourseLesson
 from hwbot.grading import GradeReport, ItemResult, ItemStatus, late_cap, round_half_up
@@ -880,9 +882,33 @@ def new_homework_announcement(assessment: Assessment) -> str:
     )
 
 
+def format_students_report(students: Sequence[Student], *, registered: bool) -> str:
+    bound = [item for item in students if item.telegram_id is not None]
+    missing = [item for item in students if item.telegram_id is None]
+    shown = bound if registered else missing
+    total = len(students)
+    if registered:
+        header = f"Зарегистрировано {len(bound)} из {total}"
+        empty = "Пока никто не зашёл."
+    else:
+        header = f"Не зарегистрированы: {len(missing)} из {total}"
+        empty = "Все уже в боте."
+    if not shown:
+        return f"{header}\n\n{empty}"
+    lines = [header, ""]
+    current_group = ""
+    for student in shown:
+        if student.group_code != current_group:
+            current_group = student.group_code
+            lines.append(student.group_code)
+        lines.append(f"— {student.full_name}")
+    return "\n".join(lines)
+
+
 def admin_home_text() -> str:
     return (
         "Ты админ. Студентом в списке тебя нет — это нормально.\n\n"
+        "/students — кто зашёл в бота\n"
         "/status — кто сдал\n"
         "/export — выгрузка CSV\n"
         "/missing — кто не сдал"

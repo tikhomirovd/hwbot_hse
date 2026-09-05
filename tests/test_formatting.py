@@ -8,6 +8,7 @@ from hwbot.formatting import (
     format_homework_card,
     format_hw_empty_soon,
     format_profile,
+    format_students_report,
     homework_status_for_student,
     late_submit_warning,
     new_homework_announcement,
@@ -269,3 +270,21 @@ def test_announcement_week_only_when_span_is_week() -> None:
     )
     assert "это неделя" in new_homework_announcement(short)
     assert "это неделя" not in new_homework_announcement(long)
+
+
+def test_students_report_lists_registered_by_group() -> None:
+    bound = Student(1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", 1, "a")
+    free = Student(2, "Петрова Анна Сергеевна", "БАЦРФ262", "petrova@example.edu", None, None)
+    text = format_students_report([bound, free], registered=True)
+    assert "Зарегистрировано 1 из 2" in text
+    assert "БАЦРФ261" in text
+    assert "Иванов Иван Иванович" in text
+    assert "Петрова" not in text
+    missing = format_students_report([bound, free], registered=False)
+    assert "Не зарегистрированы: 1 из 2" in missing
+    assert "Петрова Анна Сергеевна" in missing
+    assert "Иванов" not in missing
+    empty = format_students_report([free], registered=True)
+    assert "Пока никто не зашёл" in empty
+    full = format_students_report([bound], registered=False)
+    assert "Все уже в боте" in full

@@ -69,6 +69,8 @@ journalctl -u hwbot -f
 
 ## Команды админа
 
+- `/students` — кто зашёл в бота (N из M и список)
+- `/students missing` — кто ещё не зарегистрировался
 - `/status 1` — кто сдал
 - `/missing 1` — кто не сдал
 - `/export 1` — CSV
