@@ -1,0 +1,16 @@
+[Unit]
+Description=BACRF homework Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/hwbot
+ExecStart=/root/hwbot/.venv/bin/hwbot run
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
