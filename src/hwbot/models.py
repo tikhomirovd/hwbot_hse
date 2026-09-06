@@ -13,6 +13,16 @@ class Student:
     telegram_username: str | None
     seminar_group: str | None = None
     registered_at: int | None = None
+    db_login: str | None = None
+    db_password: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DbCredential:
+    """Логин и пароль студента в учебном PostgreSQL."""
+
+    login: str
+    password: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,6 +3,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from hwbot.availability import is_accept_open, is_current, is_upcoming, looks_like_submission
+from hwbot.config import (
+    PRIME_DB_FALLBACK_PORT,
+    PRIME_DB_HELP_URL,
+    PRIME_DB_HOST,
+    PRIME_DB_NAME,
+    PRIME_DB_PORT,
+)
 from hwbot.course import Course, LateRule, Lesson as CourseLesson
 from hwbot.grading import GradeReport, ItemResult, ItemStatus, late_cap, round_half_up
 from hwbot.models import Assessment, Student, Submission
@@ -250,6 +257,7 @@ def help_text() -> str:
         "📎 /mysubmissions — что уже сдано и с каким баллом\n"
         "📊 /grade — оценка и из чего она складывается\n"
         "🗓 /attendance — посещаемость\n"
+        "📌 /db — доступ к учебной базе ПРАЙМ\n"
         "🔄 /cancel — выйти из любого диалога\n\n"
         "<b>Про сроки</b>\n\n"
         "Дедлайн — это не «всё пропало». После него приём открыт ещё неделю, "
@@ -268,6 +276,47 @@ def help_text() -> str:
         "Ссылку на работу можно просто прислать сюда сообщением, без команд.\n\n"
         "Файлы и скриншоты я не принимаю — нужна ссылка или текст.\n"
         "Проверочные работы пишутся на лекции, через бота их сдавать не надо."
+    )
+
+
+def _prime_dsn(login: str, password: str, port: int) -> str:
+    return (
+        f"postgresql+psycopg://{login}:{password}"
+        f"@{PRIME_DB_HOST}:{port}/{PRIME_DB_NAME}?sslmode=require"
+    )
+
+
+def db_access_text(student: Student) -> str:
+    """Личная строка подключения к учебной базе.
+
+    Пароль уходит в личку и нигде больше не показывается: ни в /start,
+    ни в админских выгрузках.
+    """
+    login = student.db_login or ""
+    password = student.db_password or ""
+    main = _prime_dsn(login, password, PRIME_DB_PORT)
+    fallback = _prime_dsn(login, password, PRIME_DB_FALLBACK_PORT)
+    return (
+        "📌 <b>Доступ к учебной базе ПРАЙМ</b>\n\n"
+        f"Твой логин: <code>{escape_html(login)}</code>\n\n"
+        "Строку ниже целиком положи в файл <code>.env</code> в корне "
+        "репозитория курса. Нажми на неё — скопируется.\n\n"
+        f"<code>PRIME_DSN={escape_html(main)}</code>\n\n"
+        "Если не подключается — почти наверняка твоя сеть режет порт 5432. "
+        "Тогда бери эту строку, это тот же сервер через другой вход:\n\n"
+        f"<code>PRIME_DSN={escape_html(fallback)}</code>\n\n"
+        f'Что делать дальше — <a href="{PRIME_DB_HELP_URL}">в справке курса</a>. '
+        "Там же разобраны все ошибки, которые обычно вылезают.\n\n"
+        "⚠ Пароль личный. Не пересылай его никому — ни в чат курса, "
+        "ни преподавателю: под ним работаешь только ты, и спрос тоже с тебя."
+    )
+
+
+def db_access_missing_text() -> str:
+    return (
+        "Доступ к базе тебе ещё не завели.\n\n"
+        "Так бывает, если ты появился в ведомости позже остальных. "
+        "Напиши преподавателю — это чинится за минуту."
     )
 
 

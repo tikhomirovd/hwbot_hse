@@ -20,6 +20,7 @@ from hwbot.errors import (
 from hwbot.models import (
     Assessment,
     AttendanceMark,
+    DbCredential,
     Grade,
     HomeworkStatusRow,
     Lesson,
@@ -38,7 +39,9 @@ CREATE TABLE IF NOT EXISTS students (
     telegram_id INTEGER UNIQUE,
     telegram_username TEXT,
     seminar_group TEXT,
-    registered_at INTEGER
+    registered_at INTEGER,
+    db_login TEXT,
+    db_password TEXT
 );
 
 CREATE TABLE IF NOT EXISTS assessments (
@@ -132,7 +135,15 @@ def _student_from_row(row: aiosqlite.Row) -> Student:
         ),
         seminar_group=None if seminar is None else str(seminar),
         registered_at=_optional_int(row, "registered_at"),
+        db_login=_optional_str(row, "db_login"),
+        db_password=_optional_str(row, "db_password"),
     )
+
+
+def _optional_str(row: aiosqlite.Row, key: str) -> str | None:
+    if key not in row.keys() or row[key] is None:
+        return None
+    return str(row[key])
 
 
 def _optional_int(row: aiosqlite.Row, key: str) -> int | None:
@@ -221,6 +232,7 @@ class Database:
         await self._conn.executescript(SCHEMA)
         await self._ensure_seminar_group_column()
         await self._ensure_registered_at_column()
+        await self._ensure_db_credential_columns()
         await self._normalize_seminar_groups()
         await self._conn.commit()
 
@@ -292,6 +304,14 @@ class Database:
                 "ALTER TABLE students ADD COLUMN registered_at INTEGER"
             )
 
+    async def _ensure_db_credential_columns(self) -> None:
+        columns = await self._columns("students")
+        for column in ("db_login", "db_password"):
+            if column not in columns:
+                await self._require().execute(
+                    f"ALTER TABLE students ADD COLUMN {column} TEXT"
+                )
+
     async def _normalize_seminar_groups(self) -> None:
         conn = self._require()
         tables = await self._table_names()
@@ -345,6 +365,34 @@ class Database:
             inserted += cursor.rowcount
         await conn.commit()
         return inserted
+
+    async def set_db_credentials(
+        self, credentials: Sequence[DbCredential]
+    ) -> tuple[int, list[str]]:
+        """Разложить логины и пароли учебной базы по студентам.
+
+        Связь — по локальной части почты: логин в PostgreSQL сделан из неё.
+        Возвращает число обновлённых строк и логины, которым не нашлось
+        студента, — их надо разобрать руками, а не проглотить молча.
+        """
+        conn = self._require()
+        updated = 0
+        orphans: list[str] = []
+        for credential in credentials:
+            cursor = await conn.execute(
+                """
+                UPDATE students
+                SET db_login = ?, db_password = ?
+                WHERE substr(email, 1, instr(email, '@') - 1) = ?
+                """,
+                (credential.login, credential.password, credential.login),
+            )
+            if cursor.rowcount:
+                updated += cursor.rowcount
+            else:
+                orphans.append(credential.login)
+        await conn.commit()
+        return updated, orphans
 
     async def list_students(self) -> list[Student]:
         conn = self._require()

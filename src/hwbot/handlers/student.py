@@ -40,6 +40,8 @@ from hwbot.formatting import (
     cancel_text,
     confirm_many_students,
     confirm_one_student,
+    db_access_missing_text,
+    db_access_text,
     empty_payload_text,
     fallback_generic,
     fallback_reply,
@@ -824,6 +826,20 @@ def _attendance_payload(
             ]
         )
     return text, markup
+
+
+@router.message(Command("db"))
+async def cmd_db_access(message: Message, db: Database) -> None:
+    if message.from_user is None:
+        return
+    student = await db.get_student_by_telegram(message.from_user.id)
+    if student is None:
+        await message.answer(not_registered_text())
+        return
+    if not student.db_login or not student.db_password:
+        await message.answer(db_access_missing_text())
+        return
+    await message.answer(db_access_text(student), disable_web_page_preview=True)
 
 
 @router.message(Command("attendance"))

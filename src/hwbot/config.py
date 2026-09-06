@@ -13,6 +13,19 @@ MOSCOW_TZ = "Europe/Moscow"
 GROUP_PREFIX = "БАЦРФ"
 KNOWN_GROUPS = ("БАЦРФ261", "БАЦРФ262")
 
+# Учебный PostgreSQL. Адрес не секрет — секрет только пароль студента,
+# он лежит в ведомости и уходит личным сообщением по /db.
+# Порт 443 — тот же сервер: из сети ВШЭ и из части корпоративных VPN
+# высокие порты закрыты, а 443 не закрывают нигде.
+PRIME_DB_HOST = "2.56.240.205"
+PRIME_DB_PORT = 5432
+PRIME_DB_FALLBACK_PORT = 443
+PRIME_DB_NAME = "prime"
+PRIME_DB_HELP_URL = (
+    "https://github.com/tikhomirovd/python-for-ba-hse-2026"
+    "/blob/master/справка/подключение-к-базе.md"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:

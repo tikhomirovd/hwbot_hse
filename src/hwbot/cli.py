@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -18,7 +19,7 @@ from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, gradebook_csv, status_csv
 from hwbot.groups import canonical_seminar_group
 from hwbot.notify import broadcast_text
-from hwbot.models import Student
+from hwbot.models import DbCredential, Student
 from hwbot.ops import (
     MatchFailure,
     WriteReport,
@@ -55,6 +56,51 @@ async def cmd_import_roster() -> int:
         rows = load_roster(settings.roster_path)
         await db.seed_roster(rows)
         print(f"Импортировано студентов: {len(rows)}")
+        return 0
+    finally:
+        await db.close()
+
+
+def _read_db_credentials(path: Path) -> list[DbCredential]:
+    """Прочитать student-passwords.csv с сервера базы: колонки login,password.
+
+    Отдельный ридер, а не read_named_csv: тот требует первой колонкой
+    full_name или email, а здесь ключ — логин в PostgreSQL.
+    """
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        headers = {name.strip() for name in (reader.fieldnames or []) if name}
+        missing = {"login", "password"} - headers
+        if missing:
+            raise ValueError(f"В CSV нет колонок: {', '.join(sorted(missing))}")
+        credentials: list[DbCredential] = []
+        for line, raw in enumerate(reader, start=2):
+            login = (raw.get("login") or "").strip()
+            password = (raw.get("password") or "").strip()
+            if not login and not password:
+                continue
+            if not login or not password:
+                raise ValueError(f"Строка {line}: логин или пароль пуст")
+            credentials.append(DbCredential(login=login, password=password))
+    return credentials
+
+
+async def cmd_import_db_credentials(path: Path, dry_run: bool) -> int:
+    settings = load_settings()
+    db = await _with_db(settings.db_path)
+    try:
+        credentials = _read_db_credentials(path)
+        if dry_run:
+            print(f"Прочитано пар логин/пароль: {len(credentials)}")
+            print("Пароли не печатаю. Запусти без --dry-run, чтобы записать.")
+            return 0
+        updated, orphans = await db.set_db_credentials(credentials)
+        print(f"Проставлено студентам: {updated} из {len(credentials)}")
+        if orphans:
+            print(f"Не нашёл студента для логинов ({len(orphans)}):")
+            for login in orphans:
+                print(f"  {login}")
+            return 1
         return 0
     finally:
         await db.close()
@@ -488,6 +534,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("run", help="Запустить Telegram-бота")
     sub.add_parser("import-roster", help="Залить список студентов из CSV")
+
+    db_creds = sub.add_parser(
+        "import-db-credentials", help="Залить логины и пароли учебной базы из CSV"
+    )
+    db_creds.add_argument("--file", type=Path, required=True)
+    db_creds.add_argument("--dry-run", action="store_true")
     sub.add_parser("list-hw", help="Список ДЗ")
 
     broadcast = sub.add_parser("broadcast", help="Разослать текст зарегистрированным")
@@ -559,6 +611,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(cmd_run())
     if args.command == "import-roster":
         return asyncio.run(cmd_import_roster())
+    if args.command == "import-db-credentials":
+        return asyncio.run(cmd_import_db_credentials(args.file, args.dry_run))
     if args.command == "broadcast":
         return asyncio.run(cmd_broadcast(args.text))
     if args.command == "students":

@@ -17,6 +17,7 @@ STUDENT_COMMANDS = [
     BotCommand(command="mysubmissions", description="что уже сдано"),
     BotCommand(command="grade", description="оценка и разбивка"),
     BotCommand(command="attendance", description="посещаемость"),
+    BotCommand(command="db", description="доступ к учебной базе"),
     BotCommand(command="help", description="как здесь всё устроено"),
     BotCommand(command="cancel", description="выйти из диалога"),
 ]
