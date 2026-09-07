@@ -7,6 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 
 from hwbot.course import Assessment, AttendanceScale, Course, LateRule, Lesson
+from hwbot.groups import attends_lesson
 
 
 class Mode(Enum):
@@ -169,17 +170,11 @@ def final_score(acc: float, exam: float | None, course: Course) -> float | None:
 
 
 def student_lessons(course: Course, seminar_group: str | None) -> tuple[Lesson, ...]:
-    result: list[Lesson] = []
-    for lesson in course.lessons:
-        if lesson.kind == "lecture":
-            result.append(lesson)
-        elif (
-            lesson.kind == "seminar"
-            and seminar_group is not None
-            and lesson.seminar_group == seminar_group
-        ):
-            result.append(lesson)
-    return tuple(result)
+    return tuple(
+        lesson
+        for lesson in course.lessons
+        if attends_lesson(lesson.kind, lesson.seminar_group, seminar_group)
+    )
 
 
 def count_attendance(

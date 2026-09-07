@@ -24,6 +24,7 @@ STUDENT_COMMANDS = [
 
 ADMIN_COMMANDS = [
     *STUDENT_COMMANDS,
+    BotCommand(command="overview", description="Что требует внимания"),
     BotCommand(command="students", description="Кто зашёл в бота"),
     BotCommand(command="status", description="Кто сдал"),
     BotCommand(command="export", description="Выгрузить CSV"),

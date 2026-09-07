@@ -20,6 +20,14 @@ from hwbot.export import format_status_text, gradebook_csv, status_csv
 from hwbot.groups import canonical_seminar_group
 from hwbot.notify import broadcast_text
 from hwbot.models import DbCredential, Student
+from hwbot.overview import (
+    ActionSummary,
+    AssessmentOverview,
+    AttendanceGapKind,
+    CourseOverview,
+    LessonAttendanceGap,
+    build_course_overview,
+)
 from hwbot.ops import (
     MatchFailure,
     WriteReport,
@@ -35,7 +43,7 @@ from hwbot.ops import (
     split_names,
 )
 from hwbot.roster import load_roster
-from hwbot.timeutil import now_ts
+from hwbot.timeutil import format_dt, now_ts
 
 
 async def _with_db(db_path: Path) -> Database:
@@ -151,6 +159,89 @@ async def cmd_students(registered: bool | None) -> int:
     db = await _with_db(settings.db_path)
     try:
         print(format_students_listing(await db.list_students(), registered=registered))
+        return 0
+    finally:
+        await db.close()
+
+
+def _overview_assessment_line(item: AssessmentOverview) -> str:
+    head = f"{item.label} [{item.code}]"
+    if item.deadline_ts is not None:
+        head = f"{head} дедлайн {format_dt(item.deadline_ts)}"
+    if not item.open_for_submissions:
+        head = f"{head} приём закрыт"
+    not_submitted = "пока не сдали" if item.open_for_submissions else "не сдали"
+    parts = [
+        f"сдали {item.submitted}",
+        f"{not_submitted} {item.missing}",
+        f"проверено {item.reviewed}",
+        f"ждут проверки {item.awaiting_review}",
+    ]
+    return f"{head}\t{', '.join(parts)}"
+
+
+def _overview_gap_line(gap: LessonAttendanceGap) -> str:
+    state = (
+        f"отметок нет, ожидается {gap.expected}"
+        if gap.state is AttendanceGapKind.NOT_ENTERED
+        else f"без отметки {gap.unmarked} из {gap.expected}"
+    )
+    group = "" if gap.seminar_group is None else f" [{gap.seminar_group}]"
+    return f"{gap.code}{group}\t{gap.title}\t{state}"
+
+
+def _overview_action_lines(actions: ActionSummary) -> list[str]:
+    if not actions.has_actions:
+        return ["ручных действий сейчас нет"]
+    counters = (
+        ("не зарегистрированы", actions.unregistered),
+        ("ждут проверки", actions.awaiting_review),
+        ("занятия без отметок", actions.lessons_without_attendance),
+        ("занятия отмечены частично", actions.lessons_with_partial_attendance),
+        ("семинарская группа неизвестна", actions.students_with_unknown_seminar_group),
+    )
+    return [f"{title}\t{count}" for title, count in counters if count]
+
+
+def format_overview_text(overview: CourseOverview) -> str:
+    registration = overview.registration
+    lines = [
+        f"обзор на {format_dt(overview.as_of_ts)}",
+        "",
+        f"регистрация: {registration.registered} из {registration.total}, "
+        f"не зашли {registration.unregistered}",
+        "",
+    ]
+    if overview.assessments:
+        lines.append("работы в работе:")
+        lines.extend(_overview_assessment_line(item) for item in overview.assessments)
+    else:
+        lines.append("работ в работе нет")
+    attendance = overview.attendance
+    lines.extend(
+        [
+            "",
+            f"посещаемость: прошло занятий {attendance.ended_lessons}, "
+            f"отмечено полностью {attendance.fully_marked_lessons}",
+        ]
+    )
+    lines.extend(_overview_gap_line(gap) for gap in attendance.gaps)
+    if attendance.students_with_unknown_seminar_group:
+        lines.append(
+            "семинарская группа неизвестна у "
+            f"{attendance.students_with_unknown_seminar_group}: "
+            "они не попадают ни в один семинар"
+        )
+    lines.extend(["", "нужно внимание:"])
+    lines.extend(_overview_action_lines(overview.actions))
+    return "\n".join(lines)
+
+
+async def cmd_overview() -> int:
+    settings = load_settings()
+    db = await _with_db(settings.db_path)
+    try:
+        print(format_overview_text(await build_course_overview(db, now_ts())))
         return 0
     finally:
         await db.close()
@@ -541,6 +632,7 @@ def build_parser() -> argparse.ArgumentParser:
     db_creds.add_argument("--file", type=Path, required=True)
     db_creds.add_argument("--dry-run", action="store_true")
     sub.add_parser("list-hw", help="Список ДЗ")
+    sub.add_parser("overview", help="Что требует внимания прямо сейчас")
 
     broadcast = sub.add_parser("broadcast", help="Разослать текст зарегистрированным")
     broadcast.add_argument("--text", required=True)
@@ -626,6 +718,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(cmd_unbind(args.student))
     if args.command == "list-hw":
         return asyncio.run(cmd_list_hw())
+    if args.command == "overview":
+        return asyncio.run(cmd_overview())
     if args.command == "status":
         return asyncio.run(cmd_status(args.hw))
     if args.command == "export":

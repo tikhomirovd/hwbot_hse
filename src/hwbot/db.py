@@ -721,20 +721,38 @@ class Database:
         conn = self._require()
         cursor = await conn.execute(
             """
-            SELECT s.*
-            FROM submissions s
-            INNER JOIN (
-                SELECT student_id, assessment_id, MAX(id) AS max_id
-                FROM submissions
-                GROUP BY student_id, assessment_id
-            ) latest
-                ON latest.max_id = s.id
+            SELECT id, student_id, assessment_id, payload, submitted_at
+            FROM (
+                SELECT s.*, ROW_NUMBER() OVER (
+                    PARTITION BY s.student_id, s.assessment_id
+                    ORDER BY s.submitted_at DESC, s.id DESC
+                ) AS rn
+                FROM submissions s
+            )
+            WHERE rn = 1
             """
         )
         result: dict[tuple[int, int], Submission] = {}
         for row in await cursor.fetchall():
             submission = _submission_from_row(row)
             result[(submission.assessment_id, submission.student_id)] = submission
+        return result
+
+    async def grades_map(self) -> dict[tuple[int, int], Grade]:
+        conn = self._require()
+        cursor = await conn.execute("SELECT * FROM grades")
+        result: dict[tuple[int, int], Grade] = {}
+        for row in await cursor.fetchall():
+            grade = _grade_from_row(row)
+            result[(grade.assessment_id, grade.student_id)] = grade
+        return result
+
+    async def marked_student_ids_by_lesson(self) -> dict[int, set[int]]:
+        conn = self._require()
+        cursor = await conn.execute("SELECT lesson_id, student_id FROM attendance")
+        result: dict[int, set[int]] = {}
+        for row in await cursor.fetchall():
+            result.setdefault(int(row["lesson_id"]), set()).add(int(row["student_id"]))
         return result
 
     async def latest_submission(
