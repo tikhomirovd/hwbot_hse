@@ -6,6 +6,13 @@ from hwbot.availability import is_accept_open, is_current, is_upcoming, looks_li
 from hwbot.course import Course, LateRule, Lesson as CourseLesson
 from hwbot.grading import GradeReport, ItemResult, ItemStatus, late_cap, round_half_up
 from hwbot.models import Assessment, Student, Submission
+from hwbot.overview import (
+    ActionSummary,
+    AssessmentOverview,
+    AttendanceGapKind,
+    CourseOverview,
+    LessonAttendanceGap,
+)
 from hwbot.telegramutil import display_payload, escape_html
 from hwbot.timeutil import (
     format_human_datetime,
@@ -905,9 +912,92 @@ def format_students_report(students: Sequence[Student], *, registered: bool) -> 
     return "\n".join(lines)
 
 
+def _overview_assessment_lines(item: AssessmentOverview) -> list[str]:
+    head = escape_html(item.label)
+    if item.deadline_ts is not None:
+        head = f"{head} · дедлайн {format_human_dt(item.deadline_ts)}"
+    if not item.open_for_submissions:
+        head = f"{head} · приём закрыт"
+    not_submitted = "пока не сдали" if item.open_for_submissions else "не сдали"
+    return [
+        f"<b>{head}</b>",
+        f"— сдали {item.submitted}, {not_submitted} {item.missing}",
+        f"— проверено {item.reviewed}, ждут проверки {item.awaiting_review}",
+    ]
+
+
+def _overview_gap_line(gap: LessonAttendanceGap) -> str:
+    state = (
+        f"отметок нет, ожидается {gap.expected}"
+        if gap.state is AttendanceGapKind.NOT_ENTERED
+        else f"без отметки {gap.unmarked} из {gap.expected}"
+    )
+    group = (
+        ""
+        if gap.seminar_group is None
+        else f" [{escape_html(gap.seminar_group)}]"
+    )
+    return (
+        f"— {escape_html(gap.code)}{group} · {escape_html(gap.title)}: {state}"
+    )
+
+
+def _overview_action_lines(actions: ActionSummary) -> list[str]:
+    if not actions.has_actions:
+        return ["Сейчас ручных действий нет."]
+    counters = (
+        ("не зарегистрированы", actions.unregistered),
+        ("ждут проверки", actions.awaiting_review),
+        ("занятия без отметок", actions.lessons_without_attendance),
+        ("занятия отмечены частично", actions.lessons_with_partial_attendance),
+        ("семинарская группа неизвестна", actions.students_with_unknown_seminar_group),
+    )
+    return [f"— {title}: {count}" for title, count in counters if count]
+
+
+def format_course_overview(overview: CourseOverview) -> str:
+    registration = overview.registration
+    lines = [
+        f"🧭 <b>Обзор на {format_human_datetime(overview.as_of_ts)}</b>",
+        "",
+        "<b>Регистрация</b>",
+        f"Зашли {registration.registered} из {registration.total}, "
+        f"не зашли {registration.unregistered}",
+        "",
+        "<b>Работы в работе</b>",
+    ]
+    if overview.assessments:
+        for index, item in enumerate(overview.assessments):
+            if index:
+                lines.append("")
+            lines.extend(_overview_assessment_lines(item))
+    else:
+        lines.append("Ничего не ждёт ни сдачи, ни проверки.")
+    attendance = overview.attendance
+    lines.extend(
+        [
+            "",
+            "<b>Посещаемость</b>",
+            f"Прошло занятий {attendance.ended_lessons}, "
+            f"отмечено полностью {attendance.fully_marked_lessons}",
+        ]
+    )
+    lines.extend(_overview_gap_line(gap) for gap in attendance.gaps)
+    if attendance.students_with_unknown_seminar_group:
+        lines.append(
+            "⚠️ Семинарская группа неизвестна у "
+            f"{attendance.students_with_unknown_seminar_group}: "
+            "они не попадают ни в один семинар."
+        )
+    lines.extend(["", "<b>Нужно внимание</b>"])
+    lines.extend(_overview_action_lines(overview.actions))
+    return "\n".join(lines)
+
+
 def admin_home_text() -> str:
     return (
         "Ты админ. Студентом в списке тебя нет — это нормально.\n\n"
+        "/overview — что требует внимания\n"
         "/students — кто зашёл в бота\n"
         "/status — кто сдал\n"
         "/export — выгрузка CSV\n"

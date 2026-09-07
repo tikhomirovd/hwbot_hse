@@ -69,6 +69,8 @@ journalctl -u hwbot -f
 
 ## Команды админа
 
+- `/overview` — что требует внимания прямо сейчас: регистрация, работы в сдаче и
+  проверке, незакрытая посещаемость, счётчики дел
 - `/students` — кто зашёл в бота (N из M и список)
 - `/students missing` — кто ещё не зарегистрировался
 - `/status 1` — кто сдал
@@ -90,6 +92,8 @@ uv run hwbot grade set --assessment hw1 --student "Иванов" --score 8.5
 uv run hwbot gradebook --out /tmp/gradebook.csv
 
 uv run hwbot broadcast --text "Семинар в субботу переносится"
+
+uv run hwbot overview
 
 uv run hwbot students
 uv run hwbot students --registered
