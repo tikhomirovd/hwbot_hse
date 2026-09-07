@@ -9,6 +9,18 @@ class UnknownGroupError(ValueError):
     pass
 
 
+def attends_lesson(
+    lesson_kind: str, lesson_seminar_group: str | None, seminar_group: str | None
+) -> bool:
+    if lesson_kind == "lecture":
+        return True
+    return (
+        lesson_kind == "seminar"
+        and seminar_group is not None
+        and lesson_seminar_group == seminar_group
+    )
+
+
 def canonical_group(raw: str) -> str:
     value = raw.strip().upper().replace(" ", "")
     if value in KNOWN_GROUPS:

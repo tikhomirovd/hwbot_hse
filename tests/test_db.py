@@ -156,3 +156,49 @@ async def test_status_open_for_missing(seeded: Database) -> None:
     rows = await seeded.homework_status(homework.id)
     assert all(row.status_label == "не сдано" for row in rows)
     assert len(rows) == 4
+
+
+async def test_latest_submissions_map_matches_latest_submission(seeded: Database) -> None:
+    students = await seeded.list_students()
+    student = students[0]
+    homework = await seeded.create_homework(
+        "ДЗ порядок",
+        "text",
+        deadline_ts=2_000_000_000,
+        group_codes=("БАЦРФ261",),
+        created_at=1_000,
+    )
+    await seeded.add_submission(
+        student.id, homework.id, "https://github.com/example/newer", submitted_at=500_000
+    )
+    await seeded.add_submission(
+        student.id, homework.id, "https://github.com/example/older", submitted_at=400_000
+    )
+    single = await seeded.latest_submission(student.id, homework.id)
+    assert single is not None
+    assert single.payload.endswith("/newer")
+    batch = await seeded.latest_submissions_map()
+    assert batch[(homework.id, student.id)] == single
+
+
+async def test_latest_submissions_map_follows_resubmission(seeded: Database) -> None:
+    students = await seeded.list_students()
+    student = students[0]
+    homework = await seeded.create_homework(
+        "ДЗ пересдача",
+        "text",
+        deadline_ts=2_000_000_000,
+        group_codes=("БАЦРФ261",),
+        created_at=1_000,
+    )
+    await seeded.add_submission(
+        student.id, homework.id, "https://github.com/example/first", submitted_at=400_000
+    )
+    await seeded.add_submission(
+        student.id, homework.id, "https://github.com/example/second", submitted_at=500_000
+    )
+    single = await seeded.latest_submission(student.id, homework.id)
+    assert single is not None
+    assert single.payload.endswith("/second")
+    batch = await seeded.latest_submissions_map()
+    assert batch[(homework.id, student.id)] == single

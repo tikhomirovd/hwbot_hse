@@ -14,6 +14,10 @@ SUBMISSION_MARKERS = (
 )
 
 
+def is_active_bot_work(assessment: Assessment) -> bool:
+    return assessment.active and assessment.submit_via_bot
+
+
 def is_issued(assessment: Assessment, now: int) -> bool:
     return assessment.issued_at is None or assessment.issued_at <= now
 
@@ -24,8 +28,7 @@ def is_accept_open(assessment: Assessment, now: int) -> bool:
 
 def is_current(assessment: Assessment, now: int) -> bool:
     return (
-        assessment.active
-        and assessment.submit_via_bot
+        is_active_bot_work(assessment)
         and is_issued(assessment, now)
         and is_accept_open(assessment, now)
     )
@@ -33,8 +36,7 @@ def is_current(assessment: Assessment, now: int) -> bool:
 
 def is_upcoming(assessment: Assessment, now: int) -> bool:
     return (
-        assessment.active
-        and assessment.submit_via_bot
+        is_active_bot_work(assessment)
         and assessment.issued_at is not None
         and now < assessment.issued_at
     )

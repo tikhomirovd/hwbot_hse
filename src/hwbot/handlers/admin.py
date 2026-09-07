@@ -8,7 +8,10 @@ from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, status_csv
-from hwbot.formatting import format_students_report
+from hwbot.formatting import format_course_overview, format_students_report
+from hwbot.overview import build_course_overview
+from hwbot.telegramutil import answer_long
+from hwbot.timeutil import now_ts
 
 router = Router()
 
@@ -41,6 +44,18 @@ async def _homework_from_command(
     except ValueError:
         await message.answer("Нужен номер ДЗ, например /status 1")
         return None
+
+
+@router.message(Command("overview"))
+async def cmd_overview(
+    message: Message,
+    db: Database,
+    settings: Settings,
+) -> None:
+    if not await _admin_ok(message, settings):
+        return
+    overview = await build_course_overview(db, now_ts())
+    await answer_long(message, format_course_overview(overview))
 
 
 @router.message(Command("students"))
