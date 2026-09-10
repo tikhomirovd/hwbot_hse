@@ -5,6 +5,7 @@ import asyncio
 import csv
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from aiogram import Bot
@@ -13,7 +14,7 @@ from aiogram.enums import ParseMode
 
 from hwbot.bot import run_bot
 from hwbot.config import load_settings
-from hwbot.course import DEFAULT_COURSE_PATH, load_course
+from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, gradebook_csv, status_csv
@@ -32,18 +33,26 @@ from hwbot.ops import (
     MatchFailure,
     WriteReport,
     apply_attendance,
+    apply_course_plan,
     apply_grades,
     apply_roster_seminar_groups,
-    preview_seed,
+    plan_seed,
     read_named_csv,
     reports_for_students,
     resolve_all,
     resolve_student,
-    seed_course,
     split_names,
 )
+from hwbot.reconcile import (
+    CoursePlan,
+    EntityKind,
+    EntityPlan,
+    FieldChange,
+    FieldValue,
+    ReconcileState,
+)
 from hwbot.roster import load_roster
-from hwbot.timeutil import format_dt, now_ts
+from hwbot.timeutil import format_dt, now_ts, zone
 
 
 async def _with_db(db_path: Path) -> Database:
@@ -328,26 +337,150 @@ def _print_write_report(report: WriteReport, *, dry_run: bool) -> None:
         print(warning)
 
 
+ENTITY_WORDS = {
+    EntityKind.LESSON: "занятие",
+    EntityKind.ASSESSMENT: "элемент",
+}
+ENTITY_PLURALS = {
+    EntityKind.LESSON: "занятия",
+    EntityKind.ASSESSMENT: "элементы",
+}
+FIELD_LABELS = {
+    "starts_ts": "starts_at",
+    "ends_ts": "ends_at",
+    "deadline_ts": "deadline",
+    "accept_until_ts": "accept_until",
+    "graded_on_ts": "graded_on",
+    "body": "summary",
+}
+TIMESTAMP_FIELDS = frozenset(
+    {"starts_ts", "ends_ts", "issued_at", "deadline_ts", "accept_until_ts", "graded_on_ts"}
+)
+
+
+def _format_field_value(value: FieldValue) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    return str(value)
+
+
+def _local_time(ts: int, timezone: str) -> datetime:
+    return datetime.fromtimestamp(ts, zone(timezone))
+
+
+def _format_timestamp(value: FieldValue, pattern: str, timezone: str) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return _local_time(value, timezone).strftime(pattern)
+    return _format_field_value(value)
+
+
+def _format_timestamp_pair(
+    before: FieldValue, after: FieldValue, timezone: str
+) -> tuple[str, str]:
+    stamps = [
+        value
+        for value in (before, after)
+        if isinstance(value, int) and not isinstance(value, bool)
+    ]
+    pattern = "%d.%m.%Y %H:%M"
+    if any(_local_time(ts, timezone).second for ts in stamps):
+        pattern = f"{pattern}:%S"
+    pair = (
+        _format_timestamp(before, pattern, timezone),
+        _format_timestamp(after, pattern, timezone),
+    )
+    if pair[0] == pair[1] and before != after:
+        pattern = f"{pattern} %z"
+        pair = (
+            _format_timestamp(before, pattern, timezone),
+            _format_timestamp(after, pattern, timezone),
+        )
+    return pair
+
+
+def _format_change(change: FieldChange, timezone: str) -> str:
+    label = FIELD_LABELS.get(change.field, change.field)
+    if change.field in TIMESTAMP_FIELDS:
+        before, after = _format_timestamp_pair(change.before, change.after, timezone)
+    else:
+        before = _format_field_value(change.before)
+        after = _format_field_value(change.after)
+    return f"  {label}: {before} -> {after}"
+
+
+def _format_plan_entry(entry: EntityPlan, timezone: str) -> list[str]:
+    word = ENTITY_WORDS[entry.kind]
+    if entry.state is ReconcileState.CREATE:
+        return [f"+ {word} {entry.code}"]
+    if entry.state is ReconcileState.STALE:
+        return [f"! stale {word} {entry.code}"]
+    if entry.state is ReconcileState.UPDATE:
+        lines = [f"~ {word} {entry.code}"]
+        lines.extend(_format_change(change, timezone) for change in entry.changes)
+        return lines
+    return []
+
+
+def _format_plan_counts(
+    plan: CoursePlan, kind: EntityKind, prefix: str
+) -> str:
+    return (
+        f"{prefix}{ENTITY_PLURALS[kind]}: "
+        f"создано {plan.count(kind, ReconcileState.CREATE)}, "
+        f"обновлено {plan.count(kind, ReconcileState.UPDATE)}, "
+        f"без изменений {plan.count(kind, ReconcileState.UNCHANGED)}, "
+        f"stale {plan.count(kind, ReconcileState.STALE)}"
+    )
+
+
+def format_seed_plan(plan: CoursePlan, *, dry_run: bool, timezone: str) -> str:
+    prefix = "dry-run, " if dry_run else ""
+    lines = [
+        _format_plan_counts(plan, EntityKind.LESSON, prefix),
+        _format_plan_counts(plan, EntityKind.ASSESSMENT, prefix),
+    ]
+    detail: list[str] = []
+    for entry in plan.entries:
+        detail.extend(_format_plan_entry(entry, timezone))
+    if detail:
+        lines.append("")
+        lines.extend(detail)
+    return "\n".join(lines)
+
+
+def stale_block_message(plan: CoursePlan) -> str:
+    kinds: list[str] = []
+    if plan.stale_lessons:
+        kinds.append(ENTITY_PLURALS[EntityKind.LESSON])
+    if plan.stale_assessments:
+        kinds.append(ENTITY_PLURALS[EntityKind.ASSESSMENT])
+    listed = " и ".join(kinds)
+    return (
+        f"seed-course не применён: в БД есть {listed}, которых нет в course.toml. "
+        "Ничего не удалял и не менял — разберись с расхождением руками."
+    )
+
+
+async def run_seed_course(db: Database, course: Course, *, dry_run: bool) -> int:
+    plan = await plan_seed(db, course)
+    if plan.has_stale and not dry_run:
+        print(format_seed_plan(plan, dry_run=False, timezone=course.timezone))
+        print(stale_block_message(plan), file=sys.stderr)
+        return 1
+    if not dry_run:
+        await apply_course_plan(db, course, plan)
+    print(format_seed_plan(plan, dry_run=dry_run, timezone=course.timezone))
+    return 0
+
+
 async def cmd_seed_course(path: Path, dry_run: bool) -> int:
     settings = load_settings()
     course = load_course(path)
     db = await _with_db(settings.db_path)
     try:
-        report = await (preview_seed(db, course) if dry_run else seed_course(db, course))
-        prefix = "dry-run, " if dry_run else ""
-        print(
-            f"{prefix}занятия: создано {report.created_lessons}, "
-            f"обновлено {report.updated_lessons}, "
-            f"без изменений {report.unchanged_lessons}"
-        )
-        print(
-            f"{prefix}элементы: создано {report.created_assessments}, "
-            f"обновлено {report.updated_assessments}, "
-            f"без изменений {report.unchanged_assessments}"
-        )
-        for change in report.changes:
-            print(change)
-        return 0
+        return await run_seed_course(db, course, dry_run=dry_run)
     finally:
         await db.close()
 

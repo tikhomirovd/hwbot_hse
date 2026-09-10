@@ -33,3 +33,7 @@ class NotRegisteredError(HwbotError):
 
 class CourseError(HwbotError):
     pass
+
+
+class StaleCourseStateError(CourseError):
+    pass
