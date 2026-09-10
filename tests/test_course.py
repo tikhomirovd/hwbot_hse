@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from datetime import datetime
+
 from hwbot.config import PROJECT_ROOT
-from hwbot.course import DEFAULT_COURSE_PATH, load_course
+from hwbot.course import DEFAULT_COURSE_PATH, SEMINAR_WEEKDAY, load_course
 from hwbot.errors import CourseError
+from hwbot.timeutil import zone
 
 
 def test_load_real_course() -> None:
@@ -44,6 +47,15 @@ def test_load_real_course() -> None:
     assert hw1.accept_until_ts is not None
     assert hw1.issued_at is not None
     assert hw1.issued_at < hw1.deadline_ts < hw1.accept_until_ts
+    tz = zone(course.timezone)
+    for lesson in course.lessons:
+        if lesson.kind != "seminar" or lesson.seminar_group is None:
+            continue
+        weekday = datetime.fromtimestamp(lesson.starts_ts, tz).weekday()
+        assert weekday == SEMINAR_WEEKDAY[lesson.seminar_group]
+    exam = course.assessment_by_code("exam")
+    for group, ts in exam.defense_by_group:
+        assert datetime.fromtimestamp(ts, tz).weekday() == SEMINAR_WEEKDAY[group]
 
 
 def test_broken_weight_sum(tmp_path: Path) -> None:
@@ -64,6 +76,23 @@ def test_unknown_late_rule(tmp_path: Path) -> None:
     path = tmp_path / "broken.toml"
     path.write_text(broken, encoding="utf-8")
     with pytest.raises(CourseError, match="неизвестное правило просрочки"):
+        load_course(path)
+
+
+def test_wrong_seminar_weekday_is_rejected(tmp_path: Path) -> None:
+    text = (PROJECT_ROOT / "data" / "course.toml").read_text(encoding="utf-8")
+    broken = text.replace(
+        'code = "S01B"\nkind = "seminar"\nseminar_group = "262"\n'
+        'topic = 1\ntitle = "Знакомство с данными ПРАЙМ и учебным контуром"\n'
+        "date = 2026-09-09",
+        'code = "S01B"\nkind = "seminar"\nseminar_group = "262"\n'
+        'topic = 1\ntitle = "Знакомство с данными ПРАЙМ и учебным контуром"\n'
+        "date = 2026-09-12",
+        1,
+    )
+    path = tmp_path / "broken.toml"
+    path.write_text(broken, encoding="utf-8")
+    with pytest.raises(CourseError, match="S01B"):
         load_course(path)
 
 

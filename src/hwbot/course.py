@@ -13,6 +13,17 @@ from hwbot.timeutil import parse_deadline, parse_local_date_time, zone
 
 DEFAULT_COURSE_PATH = PROJECT_ROOT / "data" / "course.toml"
 WEIGHT_TOLERANCE = 1e-9
+# 261 занимается по субботам, 262 — по средам. datetime.weekday(): Mon=0.
+SEMINAR_WEEKDAY = {"261": 5, "262": 2}
+_WEEKDAY_RU = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,6 +406,7 @@ def _validate_course(course: Course) -> None:
                 f"Лекции + семинары группы {group} должны давать "
                 f"{course.lessons_per_student} занятий, сейчас {total}"
             )
+    _validate_seminar_weekdays(course)
     known_rules = {item.name for item in course.late_rules}
     known_components = {item.key for item in course.components}
     for assessment in course.assessments:
@@ -426,6 +438,36 @@ def _validate_course(course: Course) -> None:
             )
     _validate_scale(course.attendance_scale)
     _ = zone(course.timezone)
+
+
+def _weekday_of(ts: int, tz_name: str) -> int:
+    return datetime.fromtimestamp(ts, zone(tz_name)).weekday()
+
+
+def _validate_seminar_weekdays(course: Course) -> None:
+    for lesson in course.lessons:
+        if lesson.kind != "seminar" or lesson.seminar_group is None:
+            continue
+        expected = SEMINAR_WEEKDAY.get(lesson.seminar_group)
+        if expected is None:
+            continue
+        actual = _weekday_of(lesson.starts_ts, course.timezone)
+        if actual != expected:
+            raise CourseError(
+                f"Семинар {lesson.code} группы {lesson.seminar_group} должен быть "
+                f"в {_WEEKDAY_RU[expected]}, сейчас {_WEEKDAY_RU[actual]}"
+            )
+    for assessment in course.assessments:
+        for group, ts in assessment.defense_by_group:
+            expected = SEMINAR_WEEKDAY.get(group)
+            if expected is None:
+                continue
+            actual = _weekday_of(ts, course.timezone)
+            if actual != expected:
+                raise CourseError(
+                    f"Защита {assessment.code} группы {group} должна быть "
+                    f"в {_WEEKDAY_RU[expected]}, сейчас {_WEEKDAY_RU[actual]}"
+                )
 
 
 def _validate_scale(scale: AttendanceScale) -> None:
