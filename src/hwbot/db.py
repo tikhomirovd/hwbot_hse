@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +29,7 @@ from hwbot.models import (
     Student,
     Submission,
 )
+from hwbot.reconcile import assessment_changes, lesson_changes
 from hwbot.timeutil import is_deadline_open, now_ts
 
 SCHEMA = """
@@ -245,6 +247,17 @@ class Database:
         if self._conn is None:
             raise RuntimeError("Database is not connected")
         return self._conn
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncGenerator[None]:
+        conn = self._require()
+        await conn.execute("BEGIN")
+        try:
+            yield
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
 
     async def _table_names(self) -> set[str]:
         conn = self._require()
@@ -505,116 +518,96 @@ class Database:
             raise HomeworkNotFoundError("Студент не найден")
         return student
 
-    async def upsert_lesson(self, lesson: CourseLesson) -> Literal["created", "updated", "unchanged"]:
-        existing = await self.get_lesson_by_code(lesson.code)
+    async def write_lesson(self, lesson: CourseLesson) -> None:
         conn = self._require()
-        values = (
-            lesson.kind,
-            lesson.seminar_group,
-            lesson.topic,
-            lesson.title,
-            lesson.starts_ts,
-            lesson.ends_ts,
-            lesson.room,
-            lesson.module,
-            lesson.code,
-        )
-        if existing is None:
-            await conn.execute(
-                """
-                INSERT INTO lessons
-                    (kind, seminar_group, topic, title, starts_ts, ends_ts, room, module, code)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                values,
-            )
-            await conn.commit()
-            return "created"
-        same = (
-            existing.kind == lesson.kind
-            and existing.seminar_group == lesson.seminar_group
-            and existing.topic == lesson.topic
-            and existing.title == lesson.title
-            and existing.starts_ts == lesson.starts_ts
-            and existing.ends_ts == lesson.ends_ts
-            and existing.room == lesson.room
-            and existing.module == lesson.module
-        )
-        if same:
-            return "unchanged"
         await conn.execute(
             """
-            UPDATE lessons SET
-                kind = ?, seminar_group = ?, topic = ?, title = ?,
-                starts_ts = ?, ends_ts = ?, room = ?, module = ?
-            WHERE code = ?
+            INSERT INTO lessons
+                (code, kind, seminar_group, topic, title, starts_ts, ends_ts, room, module)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                kind = excluded.kind,
+                seminar_group = excluded.seminar_group,
+                topic = excluded.topic,
+                title = excluded.title,
+                starts_ts = excluded.starts_ts,
+                ends_ts = excluded.ends_ts,
+                room = excluded.room,
+                module = excluded.module
             """,
-            values,
+            (
+                lesson.code,
+                lesson.kind,
+                lesson.seminar_group,
+                lesson.topic,
+                lesson.title,
+                lesson.starts_ts,
+                lesson.ends_ts,
+                lesson.room,
+                lesson.module,
+            ),
         )
-        await conn.commit()
-        return "updated"
+
+    async def upsert_lesson(
+        self, lesson: CourseLesson
+    ) -> Literal["created", "updated", "unchanged"]:
+        existing = await self.get_lesson_by_code(lesson.code)
+        if existing is not None and not lesson_changes(existing, lesson):
+            return "unchanged"
+        await self.write_lesson(lesson)
+        await self._require().commit()
+        return "created" if existing is None else "updated"
+
+    async def write_assessment(self, assessment: CourseAssessment) -> None:
+        conn = self._require()
+        await conn.execute(
+            """
+            INSERT INTO assessments (
+                code, label, title, body, component, weight_final, submit_via_bot,
+                issued_at, deadline_ts, accept_until_ts, graded_on_ts,
+                late_rule, blocking, active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(code) DO UPDATE SET
+                label = excluded.label,
+                title = excluded.title,
+                body = excluded.body,
+                component = excluded.component,
+                weight_final = excluded.weight_final,
+                submit_via_bot = excluded.submit_via_bot,
+                issued_at = excluded.issued_at,
+                deadline_ts = excluded.deadline_ts,
+                accept_until_ts = excluded.accept_until_ts,
+                graded_on_ts = excluded.graded_on_ts,
+                late_rule = excluded.late_rule,
+                blocking = excluded.blocking,
+                active = 1
+            """,
+            (
+                assessment.code,
+                assessment.label,
+                assessment.title,
+                assessment.summary,
+                assessment.component,
+                assessment.weight_final,
+                int(assessment.submit_via_bot),
+                assessment.issued_at,
+                assessment.deadline_ts,
+                assessment.accept_until_ts,
+                assessment.graded_on_ts,
+                assessment.late_rule,
+                int(assessment.blocking),
+            ),
+        )
 
     async def upsert_assessment(
         self, assessment: CourseAssessment
     ) -> Literal["created", "updated", "unchanged"]:
         existing = await self.get_assessment_by_code(assessment.code)
-        conn = self._require()
-        values = (
-            assessment.label,
-            assessment.title,
-            assessment.summary,
-            assessment.component,
-            assessment.weight_final,
-            int(assessment.submit_via_bot),
-            assessment.issued_at,
-            assessment.deadline_ts,
-            assessment.accept_until_ts,
-            assessment.graded_on_ts,
-            assessment.late_rule,
-            int(assessment.blocking),
-            assessment.code,
-        )
-        if existing is None:
-            await conn.execute(
-                """
-                INSERT INTO assessments (
-                    label, title, body, component, weight_final, submit_via_bot,
-                    issued_at, deadline_ts, accept_until_ts, graded_on_ts,
-                    late_rule, blocking, code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                values,
-            )
-            await conn.commit()
-            return "created"
-        same = (
-            existing.label == assessment.label
-            and existing.title == assessment.title
-            and existing.body == assessment.summary
-            and existing.component == assessment.component
-            and existing.weight_final == assessment.weight_final
-            and existing.submit_via_bot == assessment.submit_via_bot
-            and existing.issued_at == assessment.issued_at
-            and existing.deadline_ts == assessment.deadline_ts
-            and existing.accept_until_ts == assessment.accept_until_ts
-            and existing.graded_on_ts == assessment.graded_on_ts
-            and existing.late_rule == assessment.late_rule
-            and existing.blocking == assessment.blocking
-        )
-        if same:
+        if existing is not None and not assessment_changes(existing, assessment):
             return "unchanged"
-        await conn.execute(
-            """
-            UPDATE assessments SET
-                label = ?, title = ?, body = ?, component = ?, weight_final = ?,
-                submit_via_bot = ?, issued_at = ?, deadline_ts = ?,
-                accept_until_ts = ?, graded_on_ts = ?, late_rule = ?, blocking = ?
-            WHERE code = ?
-            """,
-            values,
-        )
-        await conn.commit()
-        return "updated"
+        await self.write_assessment(assessment)
+        await self._require().commit()
+        return "created" if existing is None else "updated"
 
     async def create_homework(
         self,
@@ -677,6 +670,11 @@ class Database:
                 """,
                 (int(submit_via_bot),),
             )
+        return [_assessment_from_row(row) for row in await cursor.fetchall()]
+
+    async def all_assessments(self) -> list[Assessment]:
+        conn = self._require()
+        cursor = await conn.execute("SELECT * FROM assessments ORDER BY id")
         return [_assessment_from_row(row) for row in await cursor.fetchall()]
 
     async def list_homeworks(self, active_only: bool = False) -> list[Assessment]:

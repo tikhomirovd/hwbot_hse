@@ -5,25 +5,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from hwbot.course import Assessment as CourseAssessment
 from hwbot.course import Course
-from hwbot.course import Lesson as CourseLesson
 from hwbot.db import Database
+from hwbot.errors import StaleCourseStateError
 from hwbot.grading import GradeReport, StudentState, build_report
 from hwbot.matching import match_students
 from hwbot.models import Assessment, Lesson, Student
+from hwbot.reconcile import (
+    CoursePlan,
+    CourseSnapshot,
+    EntityKind,
+    reconcile_course,
+)
 from hwbot.roster import load_roster
-
-
-@dataclass(frozen=True, slots=True)
-class SeedReport:
-    created_lessons: int
-    updated_lessons: int
-    unchanged_lessons: int
-    created_assessments: int
-    updated_assessments: int
-    unchanged_assessments: int
-    changes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,98 +34,38 @@ class WriteReport:
     warnings: tuple[str, ...]
 
 
-def _lesson_same(existing: Lesson, lesson: CourseLesson) -> bool:
-    return (
-        existing.kind == lesson.kind
-        and existing.seminar_group == lesson.seminar_group
-        and existing.topic == lesson.topic
-        and existing.title == lesson.title
-        and existing.starts_ts == lesson.starts_ts
-        and existing.ends_ts == lesson.ends_ts
-        and existing.room == lesson.room
-        and existing.module == lesson.module
+async def load_course_snapshot(db: Database) -> CourseSnapshot:
+    lessons = await db.list_lessons()
+    assessments = await db.all_assessments()
+    return CourseSnapshot(
+        lessons={item.code: item for item in lessons},
+        assessments={item.code: item for item in assessments},
     )
 
 
-def _assessment_same(existing: Assessment, assessment: CourseAssessment) -> bool:
-    return (
-        existing.label == assessment.label
-        and existing.title == assessment.title
-        and existing.body == assessment.summary
-        and existing.component == assessment.component
-        and existing.weight_final == assessment.weight_final
-        and existing.submit_via_bot == assessment.submit_via_bot
-        and existing.issued_at == assessment.issued_at
-        and existing.deadline_ts == assessment.deadline_ts
-        and existing.accept_until_ts == assessment.accept_until_ts
-        and existing.graded_on_ts == assessment.graded_on_ts
-        and existing.late_rule == assessment.late_rule
-        and existing.blocking == assessment.blocking
-    )
+async def plan_seed(db: Database, course: Course) -> CoursePlan:
+    return reconcile_course(course, await load_course_snapshot(db))
 
 
-async def preview_seed(db: Database, course: Course) -> SeedReport:
-    created_l = updated_l = unchanged_l = 0
-    created_a = updated_a = unchanged_a = 0
-    details: list[str] = []
-    for lesson in course.lessons:
-        existing = await db.get_lesson_by_code(lesson.code)
-        if existing is None:
-            created_l += 1
-            details.append(f"+ занятие {lesson.code}")
-        elif _lesson_same(existing, lesson):
-            unchanged_l += 1
-        else:
-            updated_l += 1
-            details.append(f"~ занятие {lesson.code}")
-    for assessment in course.assessments:
-        found = await db.get_assessment_by_code(assessment.code)
-        if found is None:
-            created_a += 1
-            details.append(f"+ элемент {assessment.code}")
-        elif _assessment_same(found, assessment):
-            unchanged_a += 1
-        else:
-            updated_a += 1
-            details.append(f"~ элемент {assessment.code}")
-    return SeedReport(
-        created_lessons=created_l,
-        updated_lessons=updated_l,
-        unchanged_lessons=unchanged_l,
-        created_assessments=created_a,
-        updated_assessments=updated_a,
-        unchanged_assessments=unchanged_a,
-        changes=tuple(details),
-    )
+async def apply_course_plan(db: Database, course: Course, plan: CoursePlan) -> None:
+    if plan.has_stale:
+        raise StaleCourseStateError(
+            "В БД есть курсовые записи, которых нет в course.toml"
+        )
+    lessons = {item.code: item for item in course.lessons}
+    assessments = {item.code: item for item in course.assessments}
+    async with db.transaction():
+        for entry in plan.writes:
+            if entry.kind is EntityKind.LESSON:
+                await db.write_lesson(lessons[entry.code])
+            else:
+                await db.write_assessment(assessments[entry.code])
 
 
-async def seed_course(db: Database, course: Course) -> SeedReport:
-    created_l = updated_l = unchanged_l = 0
-    created_a = updated_a = unchanged_a = 0
-    for lesson in course.lessons:
-        result = await db.upsert_lesson(lesson)
-        if result == "created":
-            created_l += 1
-        elif result == "updated":
-            updated_l += 1
-        else:
-            unchanged_l += 1
-    for assessment in course.assessments:
-        result = await db.upsert_assessment(assessment)
-        if result == "created":
-            created_a += 1
-        elif result == "updated":
-            updated_a += 1
-        else:
-            unchanged_a += 1
-    return SeedReport(
-        created_lessons=created_l,
-        updated_lessons=updated_l,
-        unchanged_lessons=unchanged_l,
-        created_assessments=created_a,
-        updated_assessments=updated_a,
-        unchanged_assessments=unchanged_a,
-    )
+async def seed_course(db: Database, course: Course) -> CoursePlan:
+    plan = await plan_seed(db, course)
+    await apply_course_plan(db, course, plan)
+    return plan
 
 
 def split_names(raw: str) -> list[str]:
