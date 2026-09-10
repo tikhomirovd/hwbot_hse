@@ -17,7 +17,7 @@ from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, gradebook_csv, status_csv
-from hwbot.groups import canonical_seminar_group
+from hwbot.groups import UnknownGroupError, canonical_seminar_group, parse_groups
 from hwbot.notify import broadcast_text
 from hwbot.models import DbCredential, Student
 from hwbot.overview import (
@@ -114,7 +114,14 @@ async def cmd_import_db_credentials(path: Path, dry_run: bool) -> int:
         await db.close()
 
 
-async def cmd_broadcast(text: str) -> int:
+async def cmd_broadcast(text: str, group_raw: str | None) -> int:
+    group_codes: tuple[str, ...] | None = None
+    if group_raw:
+        try:
+            group_codes = parse_groups(group_raw)
+        except UnknownGroupError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     settings = load_settings()
     db = await _with_db(settings.db_path)
     bot = Bot(
@@ -122,8 +129,11 @@ async def cmd_broadcast(text: str) -> int:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     try:
-        sent = await broadcast_text(bot, db, text)
-        print(f"Разослал {sent} студентам")
+        sent = await broadcast_text(bot, db, text, group_codes=group_codes)
+        if group_codes:
+            print(f"Разослал {sent} студентам ({', '.join(group_codes)})")
+        else:
+            print(f"Разослал {sent} студентам")
         return 0
     finally:
         await bot.session.close()
@@ -636,6 +646,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     broadcast = sub.add_parser("broadcast", help="Разослать текст зарегистрированным")
     broadcast.add_argument("--text", required=True)
+    broadcast.add_argument(
+        "--group",
+        default=None,
+        help="Только эти группы: 261, 262 или БАЦРФ262",
+    )
 
     students_cmd = sub.add_parser("students", help="Список студентов")
     students_flags = students_cmd.add_mutually_exclusive_group()
@@ -706,7 +721,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "import-db-credentials":
         return asyncio.run(cmd_import_db_credentials(args.file, args.dry_run))
     if args.command == "broadcast":
-        return asyncio.run(cmd_broadcast(args.text))
+        return asyncio.run(cmd_broadcast(args.text, args.group))
     if args.command == "students":
         flag: bool | None = None
         if args.registered:

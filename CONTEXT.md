@@ -92,6 +92,7 @@ uv run hwbot grade set --assessment hw1 --student "Иванов" --score 8.5
 uv run hwbot gradebook --out /tmp/gradebook.csv
 
 uv run hwbot broadcast --text "Семинар в субботу переносится"
+uv run hwbot broadcast --group 262 --text "Опрос по семинару"
 
 uv run hwbot overview
 

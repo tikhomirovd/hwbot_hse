@@ -27,6 +27,11 @@ def test_broadcast_and_students_parsers() -> None:
     broadcast = build_parser().parse_args(["broadcast", "--text", "Сервер лежит"])
     assert broadcast.command == "broadcast"
     assert broadcast.text == "Сервер лежит"
+    assert broadcast.group is None
+    grouped = build_parser().parse_args(
+        ["broadcast", "--text", "Опрос", "--group", "262"]
+    )
+    assert grouped.group == "262"
     registered = build_parser().parse_args(["students", "--registered"])
     assert registered.registered
     missing = build_parser().parse_args(["students", "--missing"])

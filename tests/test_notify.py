@@ -4,7 +4,7 @@ from pathlib import Path
 
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
-from hwbot.notify import send_due_reminders
+from hwbot.notify import broadcast_text, send_due_reminders
 from hwbot.ops import seed_course
 from hwbot.roster import load_roster
 from hwbot.timeutil import parse_deadline
@@ -35,3 +35,16 @@ async def test_night_reminders_send_immediately(db: Database, roster_path: Path)
     assert bot.sent
     second = FakeBot()
     assert await send_due_reminders(second, db, now=night, course=course) == 0
+
+
+async def test_broadcast_text_filters_by_group(db: Database, roster_path: Path) -> None:
+    await db.seed_roster(load_roster(roster_path))
+    students = await db.list_students()
+    student_261 = next(item for item in students if item.group_code == "БАЦРФ261")
+    student_262 = next(item for item in students if item.group_code == "БАЦРФ262")
+    await db.bind_telegram(student_261.id, 111, "a")
+    await db.bind_telegram(student_262.id, 222, "b")
+    bot = FakeBot()
+    sent = await broadcast_text(bot, db, "опрос", group_codes=("БАЦРФ262",))
+    assert sent == 1
+    assert bot.sent == [(222, "опрос")]

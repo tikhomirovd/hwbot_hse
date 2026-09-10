@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Protocol
 
 from aiogram.exceptions import TelegramAPIError
@@ -25,8 +26,18 @@ class MessageSender(Protocol):
     async def send_message(self, chat_id: int, text: str) -> object: ...
 
 
-async def broadcast_text(bot: MessageSender, db: Database, text: str) -> int:
-    students = await db.list_students()
+async def broadcast_text(
+    bot: MessageSender,
+    db: Database,
+    text: str,
+    *,
+    group_codes: Sequence[str] | None = None,
+) -> int:
+    students = (
+        await db.students_in_groups(group_codes)
+        if group_codes is not None
+        else await db.list_students()
+    )
     sent = 0
     for student in students:
         if student.telegram_id is None:
