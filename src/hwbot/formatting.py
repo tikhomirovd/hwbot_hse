@@ -386,7 +386,10 @@ def fallback_generic() -> str:
 
 
 def repo_open_hint() -> str:
-    return "Репозиторий должен открываться без логина — ссылку не проверяю."
+    return (
+        "Ссылка должна открываться у преподавателя: если репозиторий приватный, "
+        "добавь tikhomirovd в Collaborators. Саму ссылку я не проверяю."
+    )
 
 
 def stub_one_work(assessment: Assessment, payload: str) -> str:
@@ -426,7 +429,8 @@ def fallback_reply(text: str, open_works: list[Assessment]) -> str:
 def submit_prompt(assessment: Assessment) -> str:
     return (
         f"📤 Сдаём <b>{work_heading(assessment)}</b>\n\n"
-        "Пришли ссылку на репозиторий одним сообщением. "
+        "Пришли ссылку на pull request одним сообщением "
+        "(вида github.com/…/prime-monitor/pull/N). "
         "Если работа не в гите — просто текстом.\n\n"
         "Передумал — /cancel"
     )

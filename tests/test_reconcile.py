@@ -376,7 +376,7 @@ async def test_plan_rendering_shows_human_values(
     text = format_seed_plan(plan, dry_run=True, timezone=course.timezone)
     assert "dry-run, элементы: создано 0, обновлено 1" in text
     assert "~ элемент hw1" in text
-    assert "  deadline: 19.09.2026 23:59 -> 20.09.2026 23:59" in text
+    assert "  deadline: 27.09.2026 23:59 -> 28.09.2026 23:59" in text
     assert "->" in text
     assert str(original.deadline_ts) not in text
 

@@ -204,7 +204,7 @@ def test_submit_button_and_accept_confirm() -> None:
     assert "Сдать" in submit_button_text(homework, submitted=False)
     assert "Обновить" in submit_button_text(homework, submitted=True)
     text = accept_confirm_text(homework, "https://github.com/a/b")
-    assert "открываться без логина" in text
+    assert "Collaborators" in text
     assert "github.com/a/b" in text
 
 

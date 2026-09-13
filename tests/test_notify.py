@@ -28,7 +28,7 @@ async def test_night_reminders_send_immediately(db: Database, roster_path: Path)
     hw1 = await db.get_assessment_by_code("hw1")
     assert hw1 is not None
     assert hw1.deadline_ts is not None
-    night = parse_deadline("2026-09-18 23:59")
+    night = parse_deadline("2026-09-26 23:59")  # ночь перед дедлайном hw1 (27.09)
     bot = FakeBot()
     sent = await send_due_reminders(bot, db, now=night, course=course)
     assert sent >= 1
