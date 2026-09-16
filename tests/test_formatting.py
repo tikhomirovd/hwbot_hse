@@ -3,20 +3,29 @@ from __future__ import annotations
 from hwbot.course import DEFAULT_COURSE_PATH, LateRule, load_course
 from hwbot.formatting import (
     accept_confirm_text,
+    db_access_text,
     format_attendance_full_list,
     format_grade_report,
     format_homework_card,
     format_hw_empty_soon,
     format_profile,
     format_students_report,
+    help_text,
     homework_status_for_student,
+    late_grade_note,
     late_submit_warning,
     new_homework_announcement,
     register_done,
     submit_button_text,
     week0_one_liner,
 )
-from hwbot.grading import StudentState, build_report, count_attendance, student_lessons
+from hwbot.grading import (
+    StudentState,
+    build_item,
+    build_report,
+    count_attendance,
+    student_lessons,
+)
 from hwbot.models import Assessment, Student, Submission
 from hwbot.telegramutil import escape_html
 from hwbot.timeutil import parse_deadline
@@ -81,7 +90,8 @@ def test_grade_report_november_text() -> None:
     assert "8,1" in text
     assert "3,8" in text
     assert "остановиться" in text
-    assert "срезано" in text
+    assert "поставлено 10, за просрочку −1, итог 9" in text
+    assert "потол" not in text
     assert "ждёт проверки" in text
     assert "<pre>" in text
     assert "перекличк" not in text
@@ -227,9 +237,45 @@ def test_exam_late_warning_has_no_daily_cut() -> None:
         active=True,
     )
     rule = LateRule("none", 0.0, 0.0, 0, None)
-    text = late_submit_warning(exam, 2, 10.0, rule)
+    text = late_submit_warning(exam, 2, rule)
     assert "штрафа за просрочку" in text.casefold()
     assert "минус балл" not in text
+
+
+def test_late_texts_show_deduction_not_ceiling() -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    rule = course.late_rule_named("homework")
+    homework = _hw(parse_deadline("2026-09-27 23:59"))
+    warning = late_submit_warning(homework, 2, rule)
+    assert "вычтется <b>2 балла</b>" in warning
+    assert "не опускает оценку ниже 4" in warning
+    assert "вычитается 1 балл" in help_text()
+    for text in (warning, help_text()):
+        assert "потол" not in text.casefold()
+
+
+def test_late_grade_note_mentions_floor() -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    rule = course.late_rule_named("homework")
+    hw = course.assessment_by_code("hw1")
+    assert hw.deadline_ts is not None
+    late3 = hw.deadline_ts + 2 * 86400 + 60
+    floored = build_item(hw, course, late3, late3, 6)
+    assert late_grade_note(floored, rule) == (
+        "поставлено 6, за просрочку −3, итог 4: штраф не опускает оценку ниже 4"
+    )
+    low = build_item(hw, course, late3, late3, 3)
+    assert low.applied_score == 3
+    assert "итог 3: штраф не опускает" in late_grade_note(low, rule)
+    on_time = build_item(hw, course, hw.deadline_ts, hw.deadline_ts, 9)
+    assert late_grade_note(on_time, rule) == ""
+
+
+def test_db_text_only_prime_monitor() -> None:
+    student = Student(1, "Иванов Иван Иванович", "БАЦРФ261", "i@edu.hse.ru", None, None)
+    text = db_access_text(student)
+    assert "prime-monitor" in text
+    assert "клона репозитория курса" not in text
 
 
 def test_announcement_week_only_when_span_is_week() -> None:

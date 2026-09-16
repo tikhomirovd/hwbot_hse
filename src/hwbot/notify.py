@@ -8,9 +8,8 @@ from aiogram.exceptions import TelegramAPIError
 
 from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
-from hwbot.errors import CourseError
 from hwbot.formatting import new_homework_announcement
-from hwbot.grading import late_cap
+from hwbot.grading import days_late
 from hwbot.models import Assessment, ReminderTarget
 from hwbot.reminders import (
     collect_reminder_targets,
@@ -55,21 +54,11 @@ async def broadcast_homework(bot: MessageSender, db: Database, assessment: Asses
     return await broadcast_text(bot, db, new_homework_announcement(assessment))
 
 
-def _cap_for_target(target: ReminderTarget, course: Course, now: int) -> float | None:
+def _days_for_target(target: ReminderTarget, now: int) -> int | None:
     days = parse_late_days(target.window)
     if days is None and target.assessment.deadline_ts is not None:
-        if now <= target.assessment.deadline_ts:
-            return None
-        from hwbot.grading import days_late
-
         days = days_late(now, target.assessment.deadline_ts)
-    if days is None:
-        return None
-    try:
-        rule = course.late_rule_named(target.assessment.late_rule)
-    except CourseError:
-        return None
-    return late_cap(rule, days)
+    return days
 
 
 async def send_due_reminders(
@@ -93,7 +82,7 @@ async def send_due_reminders(
             continue
         text = reminder_text(
             target,
-            cap=_cap_for_target(target, loaded, moment),
+            days=_days_for_target(target, moment),
             now_ts=moment,
             course=loaded,
         )

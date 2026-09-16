@@ -31,7 +31,6 @@ class ItemResult:
     weight_final: float
     status: ItemStatus
     raw_score: float | None
-    cap: float | None
     applied_score: float | None
     days_late: int
     submitted_at: int | None
@@ -112,16 +111,28 @@ def days_late(submitted_at: int, deadline_ts: int) -> int:
     return max(0, math.ceil((submitted_at - deadline_ts) / 86400))
 
 
-def late_cap(rule: LateRule, days: int) -> float:
+def late_penalty(rule: LateRule, days: int) -> float | None:
+    """Сколько баллов вычесть за `days` начатых суток просрочки.
+
+    None — приём уже обнулился (days > zero_after_days); zero_after_days = 0 значит «никогда».
+    """
     if days <= 0:
-        return 10.0
-    if rule.zero_after_days > 0 and days > rule.zero_after_days:
         return 0.0
-    return max(10.0 - rule.per_day * days, rule.floor)
+    if rule.zero_after_days > 0 and days > rule.zero_after_days:
+        return None
+    return rule.per_day * days
 
 
-def apply_late(score: float, cap: float) -> float:
-    return min(score, cap)
+def apply_late(rule: LateRule, raw: float, days: int) -> float:
+    """Итог = max(raw − per_day·d, min(raw, floor)); 0, если приём обнулился.
+
+    Штраф не опускает оценку ниже floor, но и не поднимает ту, что уже ниже floor.
+    """
+    penalty = late_penalty(rule, days)
+    if penalty is None:
+        return 0.0
+    minus = float(Decimal(str(raw)) - Decimal(str(penalty)))
+    return max(minus, min(raw, rule.floor))
 
 
 def component_score(items: Sequence[ItemResult], mode: Mode) -> float | None:
@@ -234,18 +245,12 @@ def build_item(
 ) -> ItemResult:
     status = item_status(assessment, now, submitted_at, raw_score is not None)
     late_days = 0
-    cap: float | None = None
     applied: float | None = None
     rule = course.late_rule_named(assessment.late_rule)
     if submitted_at is not None and assessment.deadline_ts is not None:
         late_days = days_late(submitted_at, assessment.deadline_ts)
-        cap = late_cap(rule, late_days)
-    elif raw_score is not None and assessment.deadline_ts is not None:
-        late_days = 0
-        cap = late_cap(rule, 0)
     if raw_score is not None:
-        cap = late_cap(rule, late_days) if cap is None else cap
-        applied = apply_late(raw_score, cap)
+        applied = apply_late(rule, raw_score, late_days)
     return ItemResult(
         code=assessment.code,
         label=assessment.label,
@@ -253,7 +258,6 @@ def build_item(
         weight_final=assessment.weight_final,
         status=status,
         raw_score=raw_score,
-        cap=cap,
         applied_score=applied,
         days_late=late_days,
         submitted_at=submitted_at,

@@ -4,8 +4,8 @@ from collections.abc import Sequence
 
 from hwbot.course import Course, LateRule
 from hwbot.errors import CourseError
-from hwbot.formatting import format_cap, work_name
-from hwbot.grading import days_late, late_cap
+from hwbot.formatting import FALLBACK_LATE_RULE, late_penalty_text, work_name
+from hwbot.grading import days_late
 from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.telegramutil import escape_html
 from hwbot.timeutil import format_human_dt
@@ -110,38 +110,30 @@ def _rule(course: Course | None, name: str) -> LateRule | None:
         return None
 
 
-def _cap_now(assessment: Assessment, now_ts: int, course: Course | None) -> float | None:
-    if assessment.deadline_ts is None or now_ts <= assessment.deadline_ts:
-        return None
-    rule = _rule(course, assessment.late_rule)
-    if rule is None:
-        return None
-    return late_cap(rule, days_late(now_ts, assessment.deadline_ts))
-
-
 def reminder_text(
     target: ReminderTarget,
-    cap: float | None = None,
+    days: int | None = None,
     *,
     now_ts: int | None = None,
     course: Course | None = None,
 ) -> str:
+    """`days` — начатые сутки просрочки; не задано — считаю от `now_ts`."""
     title = escape_html(work_name(target.assessment))
     accept = target.assessment.accept_until_ts
     accept_text = format_human_dt(accept) if accept is not None else "закрытия приёма"
     deadline = target.assessment.deadline_ts
     deadline_text = format_human_dt(deadline) if deadline is not None else "дедлайна"
-    resolved_cap = cap
-    if resolved_cap is None and now_ts is not None:
-        resolved_cap = _cap_now(target.assessment, now_ts, course)
-    cap_html = (
-        f"<b>{format_cap(resolved_cap)} из 10</b>" if resolved_cap is not None else None
-    )
+    if days is None:
+        days = 0
+        if now_ts is not None and deadline is not None:
+            days = days_late(now_ts, deadline)
+    rule = _rule(course, target.assessment.late_rule) or FALLBACK_LATE_RULE
+    penalty_text = late_penalty_text(rule, max(1, days))
     if target.window == WINDOW_24H:
         return (
             f"⏳ Завтра дедлайн по <b>{title}</b>, а от тебя пока тихо.\n\n"
             f"Сдать надо до {deadline_text}. После этого приём ещё неделю открыт, "
-            "но каждые начатые сутки опускают потолок на 1 балл.\n\n"
+            "но за каждые начатые сутки из оценки вычитается 1 балл.\n\n"
             "📤 /submit"
         )
     if target.window == WINDOW_12H:
@@ -152,11 +144,9 @@ def reminder_text(
             "📤 /submit"
         )
     if target.window == WINDOW_DEADLINE_PASSED:
-        cap_line = cap_html or "<b>9 из 10</b>"
         return (
             f"Дедлайн по <b>{title}</b> прошёл — но это ещё не конец.\n\n"
-            f"Приём открыт до {accept_text}. Потолок сейчас {cap_line} "
-            "и опускается на 1 каждые сутки. Ниже 4 в эту неделю не упадёт.\n\n"
+            f"Приём открыт до {accept_text}. {penalty_text}\n\n"
             "📤 /submit"
         )
     if target.window == WINDOW_ACCEPT_CLOSED:
@@ -182,36 +172,17 @@ def reminder_text(
             "📊 Посмотреть, как это сказалось: /grade"
         )
     if target.window == WINDOW_ACCEPT_CLOSING:
-        floor = "4 из 10"
-        if resolved_cap is not None:
-            floor = f"{format_cap(resolved_cap)} из 10"
         return (
             f"⚠️ Завтра приём по <b>{title}</b> закроется совсем.\n\n"
             f"После {accept_text} принять уже не смогу — за работу встанет 0. "
-            f"Потолок сейчас {floor}, и это сильно лучше нуля.\n\n"
+            f"Пока приём открыт, сдать ещё можно. {penalty_text}\n\n"
             "📤 /submit"
         )
-    late_days = parse_late_days(target.window)
-    if late_days is not None:
-        rule = _rule(course, target.assessment.late_rule)
-        at_floor = (
-            resolved_cap is not None
-            and rule is not None
-            and resolved_cap <= rule.floor
-            and rule.floor > 0
-        )
-        shown = cap_html or "<b>4 из 10</b>"
-        if at_floor:
-            return (
-                f"📉 По <b>{title}</b> потолок дошёл до {shown} — ниже он в эту неделю "
-                "уже не опустится.\n\n"
-                f"Но {accept_text} приём закроется совсем, и тогда будет 0. Время ещё есть.\n\n"
-                "📤 /submit"
-            )
+    if parse_late_days(target.window) is not None:
         return (
-            f"📉 По <b>{title}</b> прошли ещё сутки — потолок теперь {shown}.\n\n"
+            f"📉 По <b>{title}</b> прошли ещё сутки. {penalty_text}\n\n"
             f"Приём открыт до {format_human_day_safe(accept)}. "
-            "Чем раньше пришлёшь, тем больше останется.\n\n"
+            "Чем раньше пришлёшь, тем меньше вычтется.\n\n"
             "📤 /submit"
         )
     return (

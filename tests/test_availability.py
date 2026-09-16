@@ -5,7 +5,7 @@ from hwbot.availability import (
     is_current,
     looks_like_submission,
     upcoming_assessments,
-    would_lower_cap,
+    would_add_penalty,
 )
 from hwbot.formatting import fallback_generic, fallback_reply
 from hwbot.models import Assessment, Submission
@@ -91,27 +91,34 @@ def test_fallback_reply_never_empty() -> None:
     assert generic == fallback_generic()
 
 
-def test_resubmit_after_deadline_lowers_cap() -> None:
+def test_resubmit_after_deadline_adds_penalty() -> None:
     previous = Submission(1, 1, 1, "https://github.com/x", 50)
-    assert would_lower_cap(
+    assert would_add_penalty(
         deadline_ts=100,
         previous=previous,
         new_submitted_at=200,
-        old_cap=10.0,
-        new_cap=9.0,
+        old_penalty=0.0,
+        new_penalty=1.0,
     )
-    assert not would_lower_cap(
+    assert not would_add_penalty(
         deadline_ts=100,
         previous=previous,
         new_submitted_at=80,
-        old_cap=10.0,
-        new_cap=10.0,
+        old_penalty=0.0,
+        new_penalty=0.0,
+    )
+    assert not would_add_penalty(
+        deadline_ts=100,
+        previous=previous,
+        new_submitted_at=200,
+        old_penalty=0.0,
+        new_penalty=0.0,
     )
     late_already = Submission(2, 1, 1, "https://github.com/x", 150)
-    assert not would_lower_cap(
+    assert not would_add_penalty(
         deadline_ts=100,
         previous=late_already,
         new_submitted_at=200,
-        old_cap=9.0,
-        new_cap=8.0,
+        old_penalty=1.0,
+        new_penalty=2.0,
     )

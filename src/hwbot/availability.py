@@ -61,18 +61,21 @@ def looks_like_submission(text: str, *, has_open_work: bool = False) -> bool:
     return any(marker in lowered for marker in SUBMISSION_MARKERS)
 
 
-def would_lower_cap(
+def would_add_penalty(
     *,
     deadline_ts: int | None,
     previous: Submission,
     new_submitted_at: int,
-    old_cap: float,
-    new_cap: float,
+    old_penalty: float | None,
+    new_penalty: float | None,
 ) -> bool:
+    """Штраф в баллах (None — приём обнулился) у новой версии больше, чем у прежней в срок."""
     if deadline_ts is None:
         return False
     if previous.submitted_at > deadline_ts:
         return False
     if new_submitted_at <= deadline_ts:
         return False
-    return new_cap < old_cap
+    if new_penalty is None:
+        return old_penalty is not None
+    return old_penalty is not None and new_penalty > old_penalty

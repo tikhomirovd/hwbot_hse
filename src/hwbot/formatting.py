@@ -11,7 +11,14 @@ from hwbot.config import (
     PRIME_DB_PORT,
 )
 from hwbot.course import Course, LateRule, Lesson as CourseLesson
-from hwbot.grading import GradeReport, ItemResult, ItemStatus, late_cap, round_half_up
+from hwbot.grading import (
+    GradeReport,
+    ItemResult,
+    ItemStatus,
+    days_late,
+    late_penalty,
+    round_half_up,
+)
 from hwbot.models import Assessment, Student, Submission
 from hwbot.overview import (
     ActionSummary,
@@ -68,7 +75,10 @@ def format_score(value: float | None, digits: int = 1) -> str:
     return text.replace(".", ",")
 
 
-def format_cap(value: float) -> str:
+FALLBACK_LATE_RULE = LateRule("homework", 1.0, 4.0, 7, None)
+
+
+def format_points(value: float) -> str:
     if value == int(value):
         return str(int(value))
     return format_score(value)
@@ -106,6 +116,47 @@ def _days_word(days: int) -> str:
     if days % 10 in {2, 3, 4} and days % 100 not in {12, 13, 14}:
         return "дня"
     return "дней"
+
+
+def _points_word(value: float) -> str:
+    if value != int(value):
+        return "балла"
+    points = int(value)
+    if points % 10 == 1 and points % 100 != 11:
+        return "балл"
+    if points % 10 in {2, 3, 4} and points % 100 not in {12, 13, 14}:
+        return "балла"
+    return "баллов"
+
+
+def late_penalty_text(rule: LateRule, days: int) -> str:
+    """Что будет с оценкой при сдаче на `days` начатых суток позже дедлайна."""
+    if rule.per_day <= 0:
+        return "Штрафа за просрочку у этой работы нет."
+    penalty = late_penalty(rule, days)
+    if penalty is None:
+        return "Приём закрыт, за работу стоит 0."
+    text = f"Из оценки вычтется <b>{format_points(penalty)} {_points_word(penalty)}</b>."
+    if rule.floor > 0:
+        text += f" Штраф не опускает оценку ниже {format_points(rule.floor)}."
+    return text
+
+
+def late_grade_note(item: ItemResult, rule: LateRule) -> str:
+    """«поставлено 9, за просрочку −2, итог 7» для проверенной работы, сданной после дедлайна."""
+    if item.raw_score is None or item.applied_score is None or item.days_late <= 0:
+        return ""
+    raw = format_points(item.raw_score)
+    final = format_points(item.applied_score)
+    if rule.per_day <= 0:
+        return f"сдано с опозданием на {item.days_late} {_days_word(item.days_late)}, без штрафа"
+    penalty = late_penalty(rule, item.days_late)
+    if penalty is None:
+        return f"поставлено {raw}, сдано после закрытия приёма, итог {final}"
+    note = f"поставлено {raw}, за просрочку −{format_points(penalty)}, итог {final}"
+    if item.applied_score != round_half_up(item.raw_score - penalty, 6):
+        note += f": штраф не опускает оценку ниже {format_points(rule.floor)}"
+    return note
 
 
 def _hours_word(hours: int) -> str:
@@ -268,14 +319,15 @@ def help_text() -> str:
         "🔄 /cancel — выйти из любого диалога\n\n"
         "<b>Про сроки</b>\n\n"
         "Дедлайн — это не «всё пропало». После него приём открыт ещё неделю, "
-        "но каждые начатые сутки опускают потолок балла на 1. Ниже 4 в эту неделю "
-        "потолок не падает.\n\n"
+        "но за каждые начатые сутки из оценки вычитается 1 балл. "
+        "Штраф не опускает оценку ниже 4, а оценку ниже 4 не трогает вовсе. "
+        "Поставлено 9, сдано на 2 дня позже — итог 7. Поставлено 6, на 3 дня позже — итог 4.\n\n"
         "А вот когда неделя кончится — приём закроется совсем, и это уже 0. "
         "Разница между «сдал на четвёртый день» и «не сдал» большая, так что "
         "присылай даже поздно.\n\n"
         "<b>Про пересдачу</b>\n\n"
         "Прислать новую версию можно, пока открыт приём: считаю последнюю. "
-        "Но если первая была в срок, а новая — уже после дедлайна, потолок "
+        "Но если первая была в срок, а новая — уже после дедлайна, штраф "
         "посчитается по новой. Я предупрежу перед тем, как принять.\n\n"
         "<b>Про оценку</b>\n\n"
         "Я показываю ровно те же числа, что стоят у преподавателя, и объясняю каждое. "
@@ -307,9 +359,8 @@ def db_access_text(student: Student) -> str:
         "📌 <b>Доступ к учебной базе ПРАЙМ</b>\n\n"
         f"Твой логин: <code>{escape_html(login)}</code>\n\n"
         "Строку ниже целиком положи в файл <code>.env</code> в корне своего "
-        "репозитория <code>prime-monitor</code> — для домашних заданий. Для ноутбуков "
-        "семинаров тот же файл нужен и в корне клона репозитория курса. "
-        "Нажми на строку — скопируется.\n\n"
+        "репозитория <code>prime-monitor</code>: там идёт вся работа, и домашние задания, "
+        "и ноутбуки семинаров. Нажми на строку — скопируется.\n\n"
         f"<code>PRIME_DSN={escape_html(main)}</code>\n\n"
         "Если не подключается — почти наверняка твоя сеть режет порт 5432. "
         "Тогда бери эту строку, это тот же сервер через другой вход:\n\n"
@@ -449,7 +500,6 @@ def submit_need_text() -> str:
 def late_submit_warning(
     assessment: Assessment,
     days: int,
-    cap: float,
     rule: LateRule,
 ) -> str:
     name = escape_html(work_name(assessment))
@@ -466,15 +516,10 @@ def late_submit_warning(
             f"{accept_line}"
             "Присылай ссылку, если готов. Или /cancel."
         )
-    floor_line = ""
-    if rule.floor > 0:
-        floor_line = (
-            f" Ниже {format_cap(rule.floor)} потолок в течение недели не опустится."
-        )
     return (
         f"⚠️ Дедлайн по {name} прошёл {days} {_days_word(days)} назад.\n\n"
-        f"Работу приму, но выше <b>{format_cap(cap)} из 10</b> поставить уже не смогу "
-        f"— и каждые следующие сутки это ещё минус балл.{floor_line}\n\n"
+        f"Работу приму. {late_penalty_text(rule, days)} "
+        "Каждые следующие сутки — ещё минус балл.\n\n"
         f"{accept_line}"
         "Присылай ссылку, если готов. Или /cancel."
     )
@@ -483,14 +528,16 @@ def late_submit_warning(
 def resubmit_confirm(
     assessment: Assessment,
     previous: Submission,
-    new_cap: float,
+    days: int,
+    rule: LateRule,
 ) -> str:
     name = escape_html(work_name(assessment))
     when = format_human_day(previous.submitted_at)
     return (
         f"Ты уже сдал {name} <b>в срок</b>, {when}.\n\n"
-        f"Новая версия считается по времени отправки — потолок станет "
-        f"<b>{format_cap(new_cap)} из 10</b>. Прежнюю сдачу это заменит.\n\n"
+        "Новая версия считается по времени отправки — она будет "
+        f"на {days} {_days_word(days)} позже дедлайна. {late_penalty_text(rule, days)} "
+        "Прежнюю сдачу это заменит.\n\n"
         f"{repo_open_hint()}\n\n"
         "Точно присылать?"
     )
@@ -516,16 +563,15 @@ def accepted_on_time(
 def accepted_late(
     assessment: Assessment,
     submission: Submission,
-    cap: float,
     days: int,
+    rule: LateRule,
 ) -> str:
     name = escape_html(work_name(assessment))
     return (
         f"✅ Принял {name}.\n\n"
         f"{display_payload(submission.payload)}\n"
         f"Сдано {format_human_datetime(submission.submitted_at)} — "
-        f"на {days} {_days_word(days)} позже дедлайна, потолок "
-        f"<b>{format_cap(cap)} из 10</b>.\n\n"
+        f"на {days} {_days_word(days)} позже дедлайна. {late_penalty_text(rule, days)}\n\n"
         "Проверю и выставлю балл. Он появится в /grade."
     )
 
@@ -552,34 +598,22 @@ def _remaining_line(deadline_ts: int, now: int) -> str:
     return f"⏳ Осталось {days} {_days_word(days)} — до {until}"
 
 
-def _late_open_lines(assessment: Assessment, days: int, cap: float, rule: LateRule) -> list[str]:
+def _late_open_lines(assessment: Assessment, days: int, rule: LateRule) -> list[str]:
     accept = assessment.accept_until_ts
     accept_text = format_human_dt(accept) if accept is not None else "закрытия"
-    floor = ""
-    if rule.floor > 0:
-        floor = f", каждые сутки — минус один. Ниже {format_cap(rule.floor)} в эту неделю не упадёт."
-    else:
-        floor = ", каждые сутки — минус один."
     return [
         f"⚠️ Дедлайн прошёл {days} {_days_word(days)} назад. Приём открыт до {accept_text}",
-        f"Потолок балла сейчас <b>{format_cap(cap)} из 10</b>{floor}",
+        late_penalty_text(rule, days),
     ]
 
 
-def _grade_line(item: ItemResult) -> str:
+def _grade_line(item: ItemResult, rule: LateRule) -> str:
     if item.status is not ItemStatus.GRADED or item.applied_score is None:
         return "Балл пока не выставлен — проверяю."
     line = f"Балл: <b>{format_score(item.applied_score, 0 if item.applied_score == int(item.applied_score) else 1)}</b> из 10"
-    if (
-        item.days_late > 0
-        and item.raw_score is not None
-        and item.raw_score != item.applied_score
-    ):
-        raw = format_score(item.raw_score, 0 if item.raw_score == int(item.raw_score) else 1)
-        line += (
-            f" — поставлено {raw}, срезано потолком за {item.days_late} "
-            f"{_days_word(item.days_late)} просрочки"
-        )
+    note = late_grade_note(item, rule)
+    if note:
+        line += f" — {note}"
     return line
 
 
@@ -592,24 +626,17 @@ def format_homework_card(
     item: ItemResult | None = None,
 ) -> str:
     lines = [f"<b>{work_heading(assessment)}</b>"]
-    rule: LateRule | None = None
+    rule = FALLBACK_LATE_RULE
     if course is not None:
         try:
             rule = course.late_rule_named(assessment.late_rule)
         except Exception:
-            rule = None
+            rule = FALLBACK_LATE_RULE
     deadline = assessment.deadline_ts
     if submission is None:
         if deadline is not None and now > deadline and is_accept_open(assessment, now):
-            days = max(1, (now - deadline + 86399) // 86400)
-            if course is not None:
-                from hwbot.grading import days_late as _days_late
-
-                days = _days_late(now, deadline)
-            cap = 9.0
-            if rule is not None:
-                cap = late_cap(rule, days)
-            lines.extend(_late_open_lines(assessment, days, cap, rule or LateRule("homework", 1, 4, 7, None)))
+            days = days_late(now, deadline)
+            lines.extend(_late_open_lines(assessment, days, rule))
         elif deadline is not None:
             lines.append(_remaining_line(deadline, now))
         lines.append("Пока не сдано")
@@ -624,19 +651,18 @@ def format_homework_card(
             f"✅ Сдано {format_human_datetime(submission.submitted_at)}, в срок"
         )
     else:
-        from hwbot.grading import days_late as _days_late
-
-        days = _days_late(submission.submitted_at, deadline or submission.submitted_at)
-        cap_text = ""
-        if rule is not None:
-            cap_text = f" — потолок {format_cap(late_cap(rule, days))} из 10"
+        days = days_late(submission.submitted_at, deadline or submission.submitted_at)
+        penalty = late_penalty(rule, days)
+        penalty_text = ""
+        if penalty and (item is None or item.status is not ItemStatus.GRADED):
+            penalty_text = f" — за просрочку минус {format_points(penalty)} {_points_word(penalty)}"
         lines.append(
             f"✅ Сдано {format_human_datetime(submission.submitted_at)}, "
-            f"на {days} {_days_word(days)} позже дедлайна{cap_text}"
+            f"на {days} {_days_word(days)} позже дедлайна{penalty_text}"
         )
     lines.append(f"Твоя ссылка: {display_payload(submission.payload)}")
     if item is not None:
-        lines.append(_grade_line(item))
+        lines.append(_grade_line(item, rule))
     else:
         lines.append("Балл пока не выставлен — проверяю.")
     return "\n".join(lines)
@@ -701,9 +727,7 @@ def format_mysubmissions(
         if on_time:
             status = f"Сдано {format_human_day(submission.submitted_at)}, в срок"
         else:
-            from hwbot.grading import days_late as _days_late
-
-            days = _days_late(submission.submitted_at, deadline or 0)
+            days = days_late(submission.submitted_at, deadline or 0)
             status = (
                 f"Сдано {format_human_day(submission.submitted_at)}, "
                 f"на {days} {_days_word(days)} позже дедлайна"
@@ -728,17 +752,7 @@ def format_mysubmissions(
 def _item_reason(item: ItemResult, course: Course, now: int) -> str:
     assessment = course.assessment_by_code(item.code)
     if item.status is ItemStatus.GRADED:
-        if item.days_late > 0 and item.raw_score is not None and item.applied_score is not None:
-            if item.raw_score != item.applied_score:
-                return (
-                    f"поставлено {format_score(item.raw_score, 0 if item.raw_score == int(item.raw_score) else 1)}, "
-                    f"срезано за {item.days_late} {_days_word(item.days_late)} просрочки"
-                )
-            return (
-                f"сдано с опозданием на {item.days_late} {_days_word(item.days_late)}, "
-                f"потолок {format_score(item.cap)}"
-            )
-        return ""
+        return late_grade_note(item, course.late_rule_named(assessment.late_rule))
     if item.status is ItemStatus.AWAITING:
         if assessment.submit_via_bot:
             return "сдано, ждёт проверки"
@@ -1057,16 +1071,6 @@ def admin_home_text() -> str:
         "/status — кто сдал\n"
         "/export — выгрузка CSV\n"
         "/missing — кто не сдал"
-    )
-
-
-def format_late_warning(days: int, cap: float, rule_floor: float | None = None) -> str:
-    extra = ""
-    if rule_floor is not None and rule_floor > 0:
-        extra = f" Ниже {format_cap(rule_floor)} в эту неделю не упадёт."
-    return (
-        f"Дедлайн уже прошёл. Сейчас потолок {format_score(cap)} "
-        f"за {days} {_days_word(days)} просрочки.{extra}"
     )
 
 

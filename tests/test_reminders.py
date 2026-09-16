@@ -259,15 +259,16 @@ def test_accept_closed_exam_text() -> None:
     assert "25%" not in text
 
 
-def test_late_day_text_includes_cap() -> None:
+def test_late_day_text_includes_penalty() -> None:
     target = ReminderTarget(
         assessment=_hw(100_000),
         student=_student(5),
         window="late_2",
     )
-    text = reminder_text(target, cap=8.0)
-    assert "потолок" in text
-    assert "8" in text
+    text = reminder_text(target, days=2)
+    assert "вычтется <b>2 балла</b>" in text
+    assert "не опускает оценку ниже 4" in text
+    assert "потол" not in text.casefold()
     assert "/submit" in text
     assert "Хоп" not in text
 

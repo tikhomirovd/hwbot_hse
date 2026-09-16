@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from hwbot.course import DEFAULT_COURSE_PATH, LateRule, load_course
+import pytest
+
+from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.grading import (
     ItemResult,
     ItemStatus,
@@ -13,7 +15,7 @@ from hwbot.grading import (
     component_score,
     days_late,
     final_score,
-    late_cap,
+    late_penalty,
     round_half_up,
 )
 from hwbot.timeutil import parse_deadline
@@ -21,8 +23,6 @@ from hwbot.timeutil import parse_deadline
 
 COURSE = load_course(DEFAULT_COURSE_PATH)
 SCALE = COURSE.attendance_scale
-HW_RULE = LateRule("homework", 1.0, 4.0, 7, 7)
-PROJECT_RULE = LateRule("project1", 1.0, 0.0, 0, None)
 
 
 def test_attendance_table() -> None:
@@ -72,20 +72,30 @@ def test_days_late_boundary() -> None:
     assert days_late(deadline - 1, deadline) == 0
 
 
-def test_late_caps() -> None:
-    homework = {0: 10, 1: 9, 3: 7, 6: 4, 7: 4, 8: 0, 12: 0}
-    project = {0: 10, 1: 9, 3: 7, 6: 4, 7: 3, 8: 2, 12: 0}
-    for days, cap in homework.items():
-        assert late_cap(HW_RULE, days) == cap
-    for days, cap in project.items():
-        assert late_cap(PROJECT_RULE, days) == cap
-
-
-def test_cap_clips_score() -> None:
+@pytest.mark.parametrize("rule_name", ["homework", "project1"])
+@pytest.mark.parametrize(
+    ("raw", "days", "final"),
+    [(9, 2, 7), (6, 3, 4), (3, 1, 3), (10, 7, 4), (10, 8, 0), (5, 0, 5), (8.5, 2, 6.5)],
+)
+def test_late_subtracts_from_raw(rule_name: str, raw: float, days: int, final: float) -> None:
     from hwbot.grading import apply_late
 
-    assert apply_late(9, 4) == 4
-    assert apply_late(3, 4) == 3
+    assert apply_late(COURSE.late_rule_named(rule_name), raw, days) == final
+
+
+@pytest.mark.parametrize(("raw", "days"), [(9, 0), (9, 2), (3, 7), (10, 8), (7.5, 30)])
+def test_no_late_rule_keeps_raw(raw: float, days: int) -> None:
+    from hwbot.grading import apply_late
+
+    rule = COURSE.late_rule_named("none")
+    assert apply_late(rule, raw, days) == raw
+    assert late_penalty(rule, days) == 0
+
+
+def test_late_penalty_points() -> None:
+    rule = COURSE.late_rule_named("homework")
+    assert [late_penalty(rule, days) for days in (0, 1, 7)] == [0, 1, 7]
+    assert late_penalty(rule, 8) is None
 
 
 def test_exam_blocking() -> None:
@@ -115,7 +125,6 @@ def _item(
         weight_final=weight,
         status=status,
         raw_score=score,
-        cap=10.0 if score is not None else None,
         applied_score=score,
         days_late=0,
         submitted_at=None,
@@ -232,13 +241,13 @@ def test_three_numbers_november_example() -> None:
     assert report.exam_blocked
 
 
-def test_build_item_late_cap() -> None:
+def test_build_item_late_penalty() -> None:
     hw = COURSE.assessment_by_code("hw1")
     assert hw.deadline_ts is not None
     item = build_item(hw, COURSE, hw.deadline_ts + 300, hw.deadline_ts + 300, 9)
     assert item.days_late == 1
-    assert item.cap == 9
-    assert item.applied_score == 9
+    assert item.raw_score == 9
+    assert item.applied_score == 8
 
 
 def test_accumulated_uses_course_cap() -> None:

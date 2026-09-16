@@ -4,7 +4,7 @@ import csv
 import io
 
 from hwbot.course import Course
-from hwbot.grading import GradeReport, final_score, round_half_up
+from hwbot.grading import GradeReport, final_score, late_penalty, round_half_up
 from hwbot.models import Assessment, HomeworkStatusRow, Student
 from hwbot.timeutil import format_dt
 
@@ -77,7 +77,7 @@ def gradebook_csv(
             [
                 assessment.label,
                 f"{assessment.label} просрочка",
-                f"{assessment.label} потолок",
+                f"{assessment.label} штраф",
             ]
         )
     for component in course.components:
@@ -97,8 +97,11 @@ def gradebook_csv(
                 line.extend(["", "", ""])
                 continue
             late = "" if item.days_late == 0 else str(item.days_late)
-            cap = "" if item.cap is None else _num(item.cap)
-            line.extend([_num(item.applied_score), late, cap])
+            penalty = ""
+            if item.days_late > 0:
+                points = late_penalty(course.late_rule_named(assessment.late_rule), item.days_late)
+                penalty = "приём закрыт" if points is None else _num(points)
+            line.extend([_num(item.applied_score), late, penalty])
         scores = {line_item.key: line_item.score_now for line_item in report.components}
         for component in course.components:
             line.append(_num(scores.get(component.key)))

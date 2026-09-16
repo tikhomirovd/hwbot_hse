@@ -15,7 +15,7 @@ from aiogram.types import (
 from hwbot.availability import (
     current_assessments,
     upcoming_assessments,
-    would_lower_cap,
+    would_add_penalty,
 )
 from hwbot.commands import setup_commands
 from hwbot.config import Settings, is_admin
@@ -83,7 +83,7 @@ from hwbot.grading import (
     build_report,
     count_attendance,
     days_late,
-    late_cap,
+    late_penalty,
     student_lessons,
 )
 from hwbot.handlers.filters import PlainText
@@ -219,8 +219,7 @@ async def _prompt_for_homework(
         course = _course()
         rule = _late_rule(course, homework)
         late_days = days_late(now, homework.deadline_ts)
-        cap = late_cap(rule, late_days)
-        text = late_submit_warning(homework, late_days, cap, rule)
+        text = late_submit_warning(homework, late_days, rule)
     else:
         text = submit_prompt(homework)
     if edit:
@@ -260,14 +259,13 @@ async def _maybe_confirm_resubmit(
         return False
     course = _course()
     rule = _late_rule(course, homework)
-    old_cap = late_cap(rule, days_late(previous.submitted_at, homework.deadline_ts))
-    new_cap = late_cap(rule, days_late(now, homework.deadline_ts))
-    if not would_lower_cap(
+    new_days = days_late(now, homework.deadline_ts)
+    if not would_add_penalty(
         deadline_ts=homework.deadline_ts,
         previous=previous,
         new_submitted_at=now,
-        old_cap=old_cap,
-        new_cap=new_cap,
+        old_penalty=late_penalty(rule, days_late(previous.submitted_at, homework.deadline_ts)),
+        new_penalty=late_penalty(rule, new_days),
     ):
         return False
     await state.set_state(SubmitStates.confirming_resubmit)
@@ -286,7 +284,7 @@ async def _maybe_confirm_resubmit(
             ]
         ]
     )
-    await message.answer(resubmit_confirm(homework, previous, new_cap), reply_markup=keyboard)
+    await message.answer(resubmit_confirm(homework, previous, new_days, rule), reply_markup=keyboard)
     return True
 
 
@@ -338,15 +336,13 @@ def _accepted_text(
             course = _course()
             rule = _late_rule(course, homework)
             days = days_late(submission.submitted_at, deadline or submission.submitted_at)
-            cap = late_cap(rule, days)
-            return accepted_late(homework, submission, cap, days)
+            return accepted_late(homework, submission, days, rule)
         return accepted_update(homework, submission)
     if deadline is not None and submission.submitted_at > deadline:
         course = _course()
         rule = _late_rule(course, homework)
         days = days_late(submission.submitted_at, deadline)
-        cap = late_cap(rule, days)
-        return accepted_late(homework, submission, cap, days)
+        return accepted_late(homework, submission, days, rule)
     return accepted_on_time(homework, submission)
 
 
