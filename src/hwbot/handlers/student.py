@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.filters.callback_data import CallbackData
@@ -89,9 +91,12 @@ from hwbot.grading import (
 from hwbot.handlers.filters import PlainText
 from hwbot.matching import match_students
 from hwbot.models import Assessment, Student, Submission
+from hwbot.notify import notify_admins_submission
 from hwbot.ops import build_student_state
 from hwbot.telegramutil import answer_long
 from hwbot.timeutil import now_ts
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 fallback_router = Router()
@@ -296,6 +301,7 @@ async def _store_submission(
     homework: Assessment,
     payload: str,
     now: int,
+    settings: Settings,
 ) -> None:
     previous = await db.latest_submission(student.id, homework.id)
     try:
@@ -319,6 +325,28 @@ async def _store_submission(
         return
     await state.clear()
     await message.answer(_accepted_text(homework, submission, previous, now))
+    await _notify_admins_about_submission(
+        message, settings, student, homework, submission, previous
+    )
+
+
+async def _notify_admins_about_submission(
+    message: Message,
+    settings: Settings,
+    student: Student,
+    homework: Assessment,
+    submission: Submission,
+    previous: Submission | None,
+) -> None:
+    bot = message.bot
+    if bot is None:
+        return
+    try:
+        await notify_admins_submission(
+            bot, settings, student, homework, submission, previous=previous
+        )
+    except Exception:
+        logger.exception("admin submission notice failed")
 
 
 def _accepted_text(
@@ -682,6 +710,7 @@ async def confirm_resubmit(
     callback_data: ConfirmResub,
     state: FSMContext,
     db: Database,
+    settings: Settings,
 ) -> None:
     message = _callback_message(callback)
     if message is None:
@@ -710,7 +739,7 @@ async def confirm_resubmit(
         return
     await message.edit_reply_markup(reply_markup=None)
     await _store_submission(
-        message, state, db, student, homework, payload, now_ts()
+        message, state, db, student, homework, payload, now_ts(), settings
     )
     await callback.answer()
 
@@ -721,6 +750,7 @@ async def offer_submit(
     callback_data: OfferSubmit,
     state: FSMContext,
     db: Database,
+    settings: Settings,
 ) -> None:
     message = _callback_message(callback)
     if message is None:
@@ -752,7 +782,7 @@ async def offer_submit(
     if await _maybe_confirm_resubmit(message, state, db, student, homework, payload, now):
         await callback.answer()
         return
-    await _store_submission(message, state, db, student, homework, payload, now)
+    await _store_submission(message, state, db, student, homework, payload, now, settings)
     await callback.answer()
 
 

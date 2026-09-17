@@ -14,14 +14,26 @@ def escape_html(value: str) -> str:
     return html.escape(value, quote=True)
 
 
-def display_payload(payload: str) -> str:
+def payload_plain(payload: str) -> str:
     text = payload.strip()
     lowered = text.casefold()
     if lowered.startswith("https://"):
-        text = text[8:]
-    elif lowered.startswith("http://"):
-        text = text[7:]
-    return escape_html(text)
+        return text[8:]
+    if lowered.startswith("http://"):
+        return text[7:]
+    return text
+
+
+def display_payload(payload: str) -> str:
+    return escape_html(payload_plain(payload))
+
+
+def payload_html(payload: str) -> str:
+    text = payload.strip()
+    lowered = text.casefold()
+    if lowered.startswith("https://") or lowered.startswith("http://"):
+        return f'<a href="{escape_html(text)}">{display_payload(text)}</a>'
+    return display_payload(text)
 
 
 def split_long_text(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:

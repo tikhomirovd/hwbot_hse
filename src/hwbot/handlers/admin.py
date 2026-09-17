@@ -8,7 +8,13 @@ from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, status_csv
-from hwbot.formatting import format_course_overview, format_students_report
+from hwbot.formatting import (
+    format_course_overview,
+    format_status_board,
+    format_status_report,
+    format_students_report,
+)
+from hwbot.models import Assessment
 from hwbot.overview import build_course_overview
 from hwbot.telegramutil import answer_long
 from hwbot.timeutil import now_ts
@@ -23,6 +29,17 @@ async def _admin_ok(message: Message, settings: Settings) -> bool:
     return False
 
 
+async def resolve_homework_ref(db: Database, token: str) -> Assessment | None:
+    raw = token.strip()
+    if not raw:
+        return None
+    try:
+        homework_id = int(raw)
+    except ValueError:
+        return await db.get_assessment_by_code(raw.casefold())
+    return await db.get_homework(homework_id)
+
+
 async def _homework_from_command(
     message: Message,
     command: CommandObject,
@@ -34,16 +51,24 @@ async def _homework_from_command(
         if not homeworks:
             await message.answer("ДЗ ещё нет.")
             return None
-        lines = ["Какое ДЗ? Напиши номер, например /status 1"]
+        lines = ["Какое ДЗ? Напиши номер или код, например /status 1 или /status hw1"]
         for hw in homeworks:
             lines.append(f"/{command.command} {hw.id} — {hw.title}")
         await message.answer("\n".join(lines))
         return None
-    try:
-        return int(args.split()[0])
-    except ValueError:
-        await message.answer("Нужен номер ДЗ, например /status 1")
+    homework = await resolve_homework_ref(db, args.split()[0])
+    if homework is None:
+        token = args.split()[0]
+        try:
+            int(token)
+        except ValueError:
+            await message.answer(
+                "Нужен номер или код ДЗ, например /status 1 или /status hw1"
+            )
+            return None
+        await message.answer("Такого ДЗ нет.")
         return None
+    return homework.id
 
 
 @router.message(Command("overview"))
@@ -84,6 +109,18 @@ async def cmd_status(
 ) -> None:
     if not await _admin_ok(message, settings):
         return
+    args = (command.args or "").strip()
+    if not args:
+        homeworks = await db.list_homeworks(active_only=True)
+        if not homeworks:
+            await message.answer("ДЗ ещё нет.")
+            return
+        students = await db.list_students()
+        latest = await db.latest_submissions_map()
+        await answer_long(
+            message, format_status_board(homeworks, students, latest, html=True)
+        )
+        return
     homework_id = await _homework_from_command(message, command, db)
     if homework_id is None:
         return
@@ -95,7 +132,7 @@ async def cmd_status(
     except HomeworkNotFoundError:
         await message.answer("Такого ДЗ нет.")
         return
-    await message.answer(format_status_text(homework, rows))
+    await answer_long(message, format_status_report(homework, rows, html=True))
 
 
 @router.message(Command("missing"))

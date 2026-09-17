@@ -6,11 +6,12 @@ from typing import Protocol
 
 from aiogram.exceptions import TelegramAPIError
 
+from hwbot.config import Settings
 from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
-from hwbot.formatting import new_homework_announcement
+from hwbot.formatting import admin_submission_notice, new_homework_announcement
 from hwbot.grading import days_late
-from hwbot.models import Assessment, ReminderTarget
+from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.reminders import (
     collect_reminder_targets,
     parse_late_days,
@@ -52,6 +53,29 @@ async def broadcast_text(
 
 async def broadcast_homework(bot: MessageSender, db: Database, assessment: Assessment) -> int:
     return await broadcast_text(bot, db, new_homework_announcement(assessment))
+
+
+async def notify_admins_submission(
+    bot: MessageSender,
+    settings: Settings,
+    student: Student,
+    assessment: Assessment,
+    submission: Submission,
+    *,
+    previous: Submission | None,
+) -> int:
+    text = admin_submission_notice(
+        student, assessment, submission, previous=previous
+    )
+    sent = 0
+    for admin_id in sorted(settings.admin_telegram_ids):
+        try:
+            await bot.send_message(admin_id, text)
+        except TelegramAPIError:
+            logger.warning("admin submission notice failed for chat_id=%s", admin_id)
+            continue
+        sent += 1
+    return sent
 
 
 def _days_for_target(target: ReminderTarget, now: int) -> int | None:

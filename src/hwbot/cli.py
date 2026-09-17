@@ -17,7 +17,8 @@ from hwbot.config import load_settings
 from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
-from hwbot.export import format_status_text, gradebook_csv, status_csv
+from hwbot.export import gradebook_csv, status_csv
+from hwbot.formatting import format_status_report
 from hwbot.groups import UnknownGroupError, canonical_seminar_group, parse_groups
 from hwbot.notify import broadcast_text
 from hwbot.models import DbCredential, Student
@@ -304,7 +305,7 @@ async def cmd_status(homework_id: int) -> int:
         if homework is None:
             raise HomeworkNotFoundError("Задание не найдено")
         rows = await db.homework_status(homework_id)
-        print(format_status_text(homework, rows))
+        print(format_status_report(homework, rows, html=False))
         return 0
     except HomeworkNotFoundError:
         print("Такого ДЗ нет", file=sys.stderr)

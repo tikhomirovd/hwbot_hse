@@ -48,6 +48,8 @@ def test_status_csv_and_text() -> None:
     text = format_status_text(homework, rows)
     assert "Сдали: 1 / 2" in text
     assert "Петрова" in text
+    assert "https://github.com/x" not in text
+    assert "github.com/x" not in text
 
 
 def test_gradebook_empty_rows() -> None:

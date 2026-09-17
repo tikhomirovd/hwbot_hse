@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from hwbot.availability import is_accept_open, is_current, is_upcoming, looks_like_submission
 from hwbot.config import (
+    GROUP_PREFIX,
     PRIME_DB_FALLBACK_PORT,
     PRIME_DB_HELP_URL,
     PRIME_DB_HOST,
@@ -19,7 +20,7 @@ from hwbot.grading import (
     late_penalty,
     round_half_up,
 )
-from hwbot.models import Assessment, Student, Submission
+from hwbot.models import Assessment, HomeworkStatusRow, Student, Submission
 from hwbot.overview import (
     ActionSummary,
     AssessmentOverview,
@@ -27,7 +28,7 @@ from hwbot.overview import (
     CourseOverview,
     LessonAttendanceGap,
 )
-from hwbot.telegramutil import display_payload, escape_html
+from hwbot.telegramutil import display_payload, escape_html, payload_html, payload_plain
 from hwbot.timeutil import (
     format_human_datetime,
     format_human_day,
@@ -86,6 +87,40 @@ def format_points(value: float) -> str:
 
 def work_name(assessment: Assessment) -> str:
     return assessment.label or assessment.title
+
+
+def short_group(group_code: str) -> str:
+    if group_code.startswith(GROUP_PREFIX):
+        return group_code[len(GROUP_PREFIX) :]
+    return group_code
+
+
+def submission_timing_phrase(assessment: Assessment, submission: Submission) -> str:
+    deadline = assessment.deadline_ts
+    if deadline is None or submission.submitted_at <= deadline:
+        return "в срок"
+    days = days_late(submission.submitted_at, deadline)
+    return f"на {days} {_days_word(days)} позже дедлайна"
+
+
+def admin_submission_notice(
+    student: Student,
+    assessment: Assessment,
+    submission: Submission,
+    *,
+    previous: Submission | None,
+) -> str:
+    verb = "обновил" if previous is not None else "сдал"
+    name = escape_html(student.full_name)
+    group = escape_html(student.group_code)
+    work = escape_html(work_name(assessment))
+    when = format_human_datetime(submission.submitted_at)
+    timing = submission_timing_phrase(assessment, submission)
+    return (
+        f"{name} ({group}) {verb} <b>{work}</b>\n\n"
+        f"{payload_html(submission.payload)}\n"
+        f"{when} · {timing}"
+    )
 
 
 def submit_button_text(assessment: Assessment, *, submitted: bool) -> str:
@@ -1063,12 +1098,113 @@ def format_course_overview(overview: CourseOverview) -> str:
     return "\n".join(lines)
 
 
+def format_status_report(
+    assessment: Assessment,
+    rows: Sequence[HomeworkStatusRow],
+    *,
+    html: bool = False,
+) -> str:
+    done = [row for row in rows if row.submission is not None]
+    missing = [row for row in rows if row.submission is None]
+    heading = work_heading(assessment) if html else _status_heading_plain(assessment)
+    if html:
+        heading = f"<b>{heading}</b>"
+    lines = [
+        heading,
+        f"Сдали: {len(done)} / {len(rows)} · не сдали: {len(missing)}",
+    ]
+    if done:
+        lines.append("")
+        lines.append("<b>Сдали:</b>" if html else "Сдали:")
+        for row in done:
+            assert row.submission is not None
+            lines.extend(_status_done_lines(assessment, row, html=html))
+    if missing:
+        lines.append("")
+        lines.append("<b>Не сдали:</b>" if html else "Не сдали:")
+        for row in missing:
+            lines.append(_status_missing_line(row, html=html))
+    return "\n".join(lines)
+
+
+def format_status_board(
+    homeworks: Sequence[Assessment],
+    students: Sequence[Student],
+    latest: Mapping[tuple[int, int], Submission],
+    *,
+    html: bool = False,
+) -> str:
+    if not homeworks:
+        return "ДЗ ещё нет."
+    counts: list[str] = []
+    for homework in homeworks:
+        submitted = sum(1 for student in students if (homework.id, student.id) in latest)
+        counts.append(f"{work_name(homework)} {submitted}/{len(students)}")
+    title = "Сдали по работам"
+    lines = [
+        f"<b>{title}</b>" if html else title,
+        " · ".join(counts),
+        "",
+    ]
+    for student in students:
+        name = student.full_name
+        group = short_group(student.group_code)
+        if html:
+            name = escape_html(name)
+            group = escape_html(group)
+        marks: list[str] = []
+        for homework in homeworks:
+            label = escape_html(work_name(homework)) if html else work_name(homework)
+            mark = "✓" if (homework.id, student.id) in latest else "—"
+            marks.append(f"{label} {mark}")
+        lines.append(f"— {name} ({group})  {'  '.join(marks)}")
+    lines.append("")
+    lines.append(
+        "Подробнее: " + " · ".join(f"/status {homework.code}" for homework in homeworks)
+    )
+    return "\n".join(lines)
+
+
+def _status_heading_plain(assessment: Assessment) -> str:
+    label = work_name(assessment)
+    if assessment.label and assessment.label != assessment.title:
+        return f"{label} {assessment.title}"
+    return label
+
+
+def _status_done_lines(
+    assessment: Assessment,
+    row: HomeworkStatusRow,
+    *,
+    html: bool,
+) -> list[str]:
+    submission = row.submission
+    assert submission is not None
+    name = escape_html(row.student.full_name) if html else row.student.full_name
+    group = escape_html(row.student.group_code) if html else row.student.group_code
+    payload = payload_html(submission.payload) if html else payload_plain(submission.payload)
+    when = format_human_datetime(submission.submitted_at)
+    timing = submission_timing_phrase(assessment, submission)
+    return [
+        f"— {name} ({group})",
+        f"  {payload}",
+        f"  {when} · {timing}",
+    ]
+
+
+def _status_missing_line(row: HomeworkStatusRow, *, html: bool) -> str:
+    name = escape_html(row.student.full_name) if html else row.student.full_name
+    group = escape_html(row.student.group_code) if html else row.student.group_code
+    return f"— {name} ({group})"
+
+
 def admin_home_text() -> str:
     return (
         "Ты админ. Студентом в списке тебя нет — это нормально.\n\n"
         "/overview — что требует внимания\n"
         "/students — кто зашёл в бота\n"
-        "/status — кто сдал\n"
+        "/status — кто какие ДЗ сдал\n"
+        "/status 1 или /status hw1 — кто сдал конкретную работу, со ссылками\n"
         "/export — выгрузка CSV\n"
         "/missing — кто не сдал"
     )

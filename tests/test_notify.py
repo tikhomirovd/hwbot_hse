@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
+from aiogram.exceptions import TelegramAPIError
+
+from hwbot.config import Settings
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.db import Database
-from hwbot.notify import broadcast_text, send_due_reminders
+from hwbot.models import Assessment, Student, Submission
+from hwbot.notify import broadcast_text, notify_admins_submission, send_due_reminders
 from hwbot.ops import seed_course
 from hwbot.roster import load_roster
 from hwbot.timeutil import parse_deadline
@@ -48,3 +53,60 @@ async def test_broadcast_text_filters_by_group(db: Database, roster_path: Path) 
     sent = await broadcast_text(bot, db, "опрос", group_codes=("БАЦРФ262",))
     assert sent == 1
     assert bot.sent == [(222, "опрос")]
+
+
+class FlakyBot:
+    def __init__(self, fail_ids: set[int]) -> None:
+        self.fail_ids = fail_ids
+        self.sent: list[tuple[int, str]] = []
+
+    async def send_message(self, chat_id: int, text: str) -> None:
+        if chat_id in self.fail_ids:
+            raise TelegramAPIError(method=Mock(), message="fail")
+        self.sent.append((chat_id, text))
+
+
+def _notice_settings(*admin_ids: int) -> Settings:
+    return Settings(
+        bot_token="test",
+        admin_telegram_ids=frozenset(admin_ids),
+        db_path=Path("bot.db"),
+        roster_path=Path("roster.csv"),
+        timezone="Europe/Moscow",
+    )
+
+
+async def test_notify_admins_submission_sends_to_all_and_survives_one_failure() -> None:
+    homework = Assessment(
+        id=1,
+        code="hw1",
+        label="ДЗ-1",
+        title="ДЗ 1",
+        body="body",
+        component="homework",
+        weight_final=0.0625,
+        submit_via_bot=True,
+        issued_at=1,
+        deadline_ts=2_000,
+        accept_until_ts=2_000 + 7 * 86400,
+        graded_on_ts=None,
+        late_rule="homework",
+        blocking=False,
+        active=True,
+    )
+    student = Student(1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", 1, "a")
+    submission = Submission(1, 1, 1, "https://github.com/x/hw", 1_500)
+    bot = FlakyBot(fail_ids={11})
+    sent = await notify_admins_submission(
+        bot,
+        _notice_settings(22, 11),
+        student,
+        homework,
+        submission,
+        previous=None,
+    )
+    assert sent == 1
+    assert [chat_id for chat_id, _text in bot.sent] == [22]
+    assert "сдал" in bot.sent[0][1]
+    assert "ДЗ-1" in bot.sent[0][1]
+    assert "github.com/x/hw" in bot.sent[0][1]

@@ -3,12 +3,16 @@ from __future__ import annotations
 from hwbot.course import DEFAULT_COURSE_PATH, LateRule, load_course
 from hwbot.formatting import (
     accept_confirm_text,
+    admin_home_text,
+    admin_submission_notice,
     db_access_text,
     format_attendance_full_list,
     format_grade_report,
     format_homework_card,
     format_hw_empty_soon,
     format_profile,
+    format_status_board,
+    format_status_report,
     format_students_report,
     help_text,
     homework_status_for_student,
@@ -26,7 +30,7 @@ from hwbot.grading import (
     count_attendance,
     student_lessons,
 )
-from hwbot.models import Assessment, Student, Submission
+from hwbot.models import Assessment, HomeworkStatusRow, Student, Submission
 from hwbot.telegramutil import escape_html
 from hwbot.timeutil import parse_deadline
 
@@ -334,3 +338,86 @@ def test_students_report_lists_registered_by_group() -> None:
     assert "Пока никто не зашёл" in empty
     full = format_students_report([bound], registered=False)
     assert "Все уже в боте" in full
+
+
+def _student() -> Student:
+    return Student(1, "Иванов Иван Иванович", "БАЦРФ261", "ivanov@example.edu", 1, "a")
+
+
+def test_admin_submission_notice_first_and_update() -> None:
+    homework = _hw(parse_deadline("2026-09-27 23:59"))
+    student = _student()
+    on_time = Submission(1, 1, 1, "https://github.com/x/hw", homework.deadline_ts or 1)
+    text = admin_submission_notice(student, homework, on_time, previous=None)
+    assert "Иванов Иван Иванович (БАЦРФ261) сдал <b>ДЗ-1</b>" in text
+    assert '<a href="https://github.com/x/hw">' in text
+    assert "в срок" in text
+    assert "обновил" not in text
+
+    late = Submission(2, 1, 1, "просто текст", (homework.deadline_ts or 1) + 86400)
+    updated = admin_submission_notice(student, homework, late, previous=on_time)
+    assert "обновил <b>ДЗ-1</b>" in updated
+    assert "просто текст" in updated
+    assert "<a " not in updated
+    assert "на 1 день позже дедлайна" in updated
+
+
+def test_format_status_report_lists_payloads() -> None:
+    homework = _hw(100)
+    done = _student()
+    missing = Student(2, "Петрова Анна Сергеевна", "БАЦРФ261", "p@example.edu", None, None)
+    rows = [
+        HomeworkStatusRow(
+            student=done,
+            submission=Submission(1, 1, 1, "https://github.com/x/hw", 40),
+            accept_until_ts=homework.accept_until_ts,
+            now_ts=50,
+        ),
+        HomeworkStatusRow(student=missing, submission=None),
+    ]
+    text = format_status_report(homework, rows, html=False)
+    assert "Сдали: 1 / 2 · не сдали: 1" in text
+    assert "Иванов Иван Иванович (БАЦРФ261)" in text
+    assert "github.com/x/hw" in text
+    assert "в срок" in text
+    assert "Петрова Анна Сергеевна" in text
+    html = format_status_report(homework, rows, html=True)
+    assert '<a href="https://github.com/x/hw">' in html
+    assert "<b>Сдали:</b>" in html
+
+
+def test_format_status_board_marks_submitted_homeworks() -> None:
+    hw1 = _hw(100)
+    hw2 = Assessment(
+        id=2,
+        code="hw2",
+        label="ДЗ-2",
+        title="ДЗ 2",
+        body="body",
+        component="homework",
+        weight_final=0.0625,
+        submit_via_bot=True,
+        issued_at=1,
+        deadline_ts=200,
+        accept_until_ts=200 + 7 * 86400,
+        graded_on_ts=None,
+        late_rule="homework",
+        blocking=False,
+        active=True,
+    )
+    ivanov = _student()
+    petrova = Student(2, "Петрова Анна Сергеевна", "БАЦРФ261", "p@example.edu", None, None)
+    latest = {(1, 1): Submission(1, 1, 1, "https://github.com/x", 40)}
+    text = format_status_board([hw1, hw2], [ivanov, petrova], latest, html=False)
+    assert "ДЗ-1 1/2 · ДЗ-2 0/2" in text
+    assert "Иванов Иван Иванович (261)  ДЗ-1 ✓  ДЗ-2 —" in text
+    assert "Петрова Анна Сергеевна (261)  ДЗ-1 —  ДЗ-2 —" in text
+    assert "/status hw1" in text
+    assert "/status hw2" in text
+    assert format_status_board([], [ivanov], {}, html=False) == "ДЗ ещё нет."
+
+
+def test_admin_home_mentions_status_summary() -> None:
+    text = admin_home_text()
+    assert "/status — кто какие ДЗ сдал" in text
+    assert "/status hw1" in text

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hwbot.telegramutil import display_payload, escape_html, split_long_text
+from hwbot.telegramutil import display_payload, escape_html, payload_html, split_long_text
 
 
 def test_escape_payload_does_not_keep_html() -> None:
@@ -11,6 +11,14 @@ def test_escape_payload_does_not_keep_html() -> None:
 
 def test_display_payload_strips_scheme_and_escapes() -> None:
     assert display_payload("https://github.com/x/<b>") == "github.com/x/&lt;b&gt;"
+
+
+def test_payload_html_makes_http_url_clickable() -> None:
+    html = payload_html("https://github.com/x/<b>")
+    assert html.startswith('<a href="https://github.com/x/&lt;b&gt;">')
+    assert "github.com/x/&lt;b&gt;" in html
+    assert payload_html("просто текст <b>") == "просто текст &lt;b&gt;"
+    assert "<a " not in payload_html("просто текст")
 
 
 def test_split_long_keeps_pre_intact() -> None:
