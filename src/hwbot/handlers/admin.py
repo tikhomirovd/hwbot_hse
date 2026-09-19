@@ -8,15 +8,18 @@ from hwbot.config import Settings, is_admin
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import format_status_text, status_csv
+from hwbot.course import DEFAULT_COURSE_PATH, load_course
 from hwbot.formatting import (
     format_course_overview,
+    format_gradebook_board,
     format_status_board,
     format_status_report,
     format_students_report,
 )
 from hwbot.models import Assessment
+from hwbot.ops import reports_for_students
 from hwbot.overview import build_course_overview
-from hwbot.telegramutil import answer_long
+from hwbot.telegramutil import answer_long, escape_html
 from hwbot.timeutil import now_ts
 
 router = Router()
@@ -81,6 +84,23 @@ async def cmd_overview(
         return
     overview = await build_course_overview(db, now_ts())
     await answer_long(message, format_course_overview(overview))
+
+
+@router.message(Command("gradebook"))
+async def cmd_gradebook(
+    message: Message,
+    db: Database,
+    settings: Settings,
+) -> None:
+    if not await _admin_ok(message, settings):
+        return
+    rows = await reports_for_students(db, load_course(DEFAULT_COURSE_PATH), now_ts())
+    board = escape_html("\n".join(format_gradebook_board(rows)))
+    await answer_long(
+        message,
+        "Ведомость: «идёшь» — по проверенному, «карман» — накопленная сейчас "
+        f"(из 7), «ноль» — если больше ничего не сдавать.\n\n<pre>{board}</pre>",
+    )
 
 
 @router.message(Command("students"))

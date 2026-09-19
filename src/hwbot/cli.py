@@ -18,7 +18,7 @@ from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
 from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import gradebook_csv, status_csv
-from hwbot.formatting import format_status_report
+from hwbot.formatting import format_gradebook_board, format_status_report
 from hwbot.groups import UnknownGroupError, canonical_seminar_group, parse_groups
 from hwbot.notify import broadcast_text
 from hwbot.models import DbCredential, Student
@@ -693,12 +693,15 @@ async def cmd_grade_show(assessment_code: str | None, student_query: str | None)
         await db.close()
 
 
-async def cmd_gradebook(output: Path) -> int:
+async def cmd_gradebook(output: Path | None) -> int:
     settings = load_settings()
     course = load_course(DEFAULT_COURSE_PATH)
     db = await _with_db(settings.db_path)
     try:
         rows = await reports_for_students(db, course, now_ts())
+        if output is None:
+            print("\n".join(format_gradebook_board(rows)))
+            return 0
         output.write_text(gradebook_csv(course, rows), encoding="utf-8")
         print(f"Записал {output}")
         return 0
@@ -835,8 +838,8 @@ def build_parser() -> argparse.ArgumentParser:
     grade_show.add_argument("--assessment")
     grade_show.add_argument("--student")
 
-    gradebook = sub.add_parser("gradebook", help="Выгрузить ведомость")
-    gradebook.add_argument("--out", type=Path, required=True)
+    gradebook = sub.add_parser("gradebook", help="Ведомость: без --out печатает в терминал")
+    gradebook.add_argument("--out", type=Path)
 
     seminar = sub.add_parser("set-seminar-group", help="Семинарская группа")
     seminar.add_argument("--student")

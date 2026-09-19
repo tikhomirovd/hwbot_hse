@@ -1229,3 +1229,38 @@ def homework_status_for_student(
     if is_upcoming(assessment, now):
         return "ещё не выдано"
     return "приём закрыт · 0"
+
+
+def short_name(full_name: str) -> str:
+    """«Абрамова Анастасия Романовна» → «Абрамова А.Р.» — чтобы строка влезла в телефон."""
+    surname, *rest = full_name.split()
+    return " ".join([surname, "".join(f"{part[0]}." for part in rest)]).strip()
+
+
+def _board_score(value: float | None) -> str:
+    return "—" if value is None else f"{round_half_up(value, 1):.1f}".replace(".", ",")
+
+
+def format_gradebook_board(rows: Sequence[tuple[Student, GradeReport]]) -> list[str]:
+    """Ведомость строками: кто на что идёт. Одинакова в терминале и в боте."""
+    if not rows:
+        return ["Студентов нет"]
+    width = max(len(short_name(student.full_name)) for student, _ in rows)
+    lines = [f"{'студент'.ljust(width)}  гр.  идёшь  карман  ноль"]
+    for student, report in sorted(rows, key=lambda row: row[0].full_name):
+        lines.append(
+            f"{short_name(student.full_name).ljust(width)}  "
+            f"{student.group_code[-3:]}  "
+            f"{_board_score(report.heading_to).rjust(5)}  "
+            f"{_board_score(report.in_pocket).rjust(6)}  "
+            f"{_board_score(report.if_nothing).rjust(4)}"
+        )
+    heading = [report.heading_to for _, report in rows if report.heading_to is not None]
+    if heading:
+        risk = sum(1 for value in heading if value < 4)
+        lines.append("")
+        lines.append(
+            f"студентов {len(rows)}, средняя «идёшь» "
+            f"{_board_score(sum(heading) / len(heading))}, ниже 4 — {risk}"
+        )
+    return lines

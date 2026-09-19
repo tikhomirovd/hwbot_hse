@@ -5,8 +5,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-data/bot.db
-data/*.db-journal
-data/roster.csv
+# data/ — запрет по умолчанию: там ведомость, пароли студентов к учебной базе
+# и резервные копии bot.db. Новый файл в этой папке не должен попадать в git
+# просто потому, что про него забыли дописать правило.
+data/*
+!data/course.toml
+!data/roster.example.csv
 dist/
 *.egg-info/

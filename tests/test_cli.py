@@ -21,6 +21,8 @@ def test_seed_and_grade_parsers() -> None:
     assert grade.score == 8.5
     book = parser.parse_args(["gradebook", "--out", "/tmp/g.csv"])
     assert book.command == "gradebook"
+    # без --out ведомость печатается в терминал, а не пишется в файл
+    assert parser.parse_args(["gradebook"]).out is None
 
 
 def test_broadcast_and_students_parsers() -> None:

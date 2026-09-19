@@ -8,6 +8,7 @@ from hwbot.formatting import (
     db_access_text,
     format_attendance_full_list,
     format_grade_report,
+    format_gradebook_board,
     format_homework_card,
     format_hw_empty_soon,
     format_profile,
@@ -20,6 +21,7 @@ from hwbot.formatting import (
     late_submit_warning,
     new_homework_announcement,
     register_done,
+    short_name,
     submit_button_text,
     week0_one_liner,
 )
@@ -421,3 +423,43 @@ def test_admin_home_mentions_status_summary() -> None:
     text = admin_home_text()
     assert "/status — кто какие ДЗ сдал" in text
     assert "/status hw1" in text
+
+
+def test_gradebook_board() -> None:
+    course = load_course(DEFAULT_COURSE_PATH)
+    now = parse_deadline("2026-09-20 12:00")
+    held = frozenset({"L01", "L02"})
+
+    def state(seminar: str, present: bool, quiz: float) -> StudentState:
+        status = "present" if present else "absent"
+        return StudentState(
+            seminar, {"L01": status, "L02": status}, held, {}, {"quiz1": quiz}
+        )
+
+    good = Student(2, "Яковлев Пётр Ильич", "БАЦРФ262", "ya@edu.hse.ru", None, None, "262")
+    weak = Student(1, "Антонов Иван Петрович", "БАЦРФ261", "an@edu.hse.ru", None, None, "261")
+    rows = [
+        (good, build_report(state("262", True, 10.0), course, now)),
+        (weak, build_report(state("261", False, 2.0), course, now)),
+    ]
+    lines = format_gradebook_board(rows)
+    assert lines[0].startswith("студент")
+    # по алфавиту, а не в порядке списка; имя сжато до инициалов
+    assert lines[1].startswith("Антонов И.П.")
+    assert lines[2].startswith("Яковлев П.И.")
+    # кто ходил и написал на 10 — выше того, кто не ходил и написал на 2
+    heading_good, heading_weak = rows[0][1].heading_to, rows[1][1].heading_to
+    assert heading_good is not None and heading_weak is not None
+    assert heading_good > heading_weak
+    assert any("студентов 2" in line and "ниже 4" in line for line in lines)
+    # десятичный разделитель — запятая, как во всех текстах бота
+    numbers = lines[1].split()[-3:]
+    assert numbers == ["1,2", "0,0", "0,0"]
+    # строка влезает в телефон
+    assert max(len(line) for line in lines) < 46
+
+
+def test_short_name() -> None:
+    assert short_name("Абрамова Анастасия Романовна") == "Абрамова А.Р."
+    assert short_name("Сорокина София") == "Сорокина С."
+    assert short_name("Рубан") == "Рубан"
