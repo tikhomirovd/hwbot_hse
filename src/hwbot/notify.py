@@ -78,6 +78,33 @@ async def notify_admins_submission(
     return sent
 
 
+async def notify_admins_latest_submissions(
+    bot: MessageSender,
+    settings: Settings,
+    db: Database,
+    *,
+    assessment_code: str | None = None,
+) -> int:
+    assessments = {
+        item.id: item
+        for item in await db.list_assessments(submit_via_bot=True)
+        if assessment_code is None or item.code == assessment_code
+    }
+    students = {item.id: item for item in await db.list_students()}
+    latest = await db.latest_submissions_map()
+    ordered = sorted(latest.values(), key=lambda item: (item.submitted_at, item.id))
+    sent = 0
+    for submission in ordered:
+        assessment = assessments.get(submission.assessment_id)
+        student = students.get(submission.student_id)
+        if assessment is None or student is None:
+            continue
+        sent += await notify_admins_submission(
+            bot, settings, student, assessment, submission, previous=None
+        )
+    return sent
+
+
 def _days_for_target(target: ReminderTarget, now: int) -> int | None:
     days = parse_late_days(target.window)
     if days is None and target.assessment.deadline_ts is not None:

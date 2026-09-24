@@ -20,7 +20,7 @@ from hwbot.errors import HomeworkNotFoundError
 from hwbot.export import gradebook_csv, status_csv
 from hwbot.formatting import format_gradebook_board, format_status_report
 from hwbot.groups import UnknownGroupError, canonical_seminar_group, parse_groups
-from hwbot.notify import broadcast_text
+from hwbot.notify import broadcast_text, notify_admins_latest_submissions
 from hwbot.models import DbCredential, Student
 from hwbot.overview import (
     ActionSummary,
@@ -121,6 +121,29 @@ async def cmd_import_db_credentials(path: Path, dry_run: bool) -> int:
             return 1
         return 0
     finally:
+        await db.close()
+
+
+async def cmd_notify_submissions(assessment_code: str | None) -> int:
+    settings = load_settings()
+    db = await _with_db(settings.db_path)
+    bot = Bot(
+        settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    try:
+        sent = await notify_admins_latest_submissions(
+            bot, settings, db, assessment_code=assessment_code
+        )
+        if assessment_code is None:
+            print(f"Отправил админам {sent} уведомлений о сдачах")
+        else:
+            print(
+                f"Отправил админам {sent} уведомлений о сдачах {assessment_code}"
+            )
+        return 0
+    finally:
+        await bot.session.close()
         await db.close()
 
 
@@ -789,6 +812,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Только эти группы: 261, 262 или БАЦРФ262",
     )
 
+    notify_subs = sub.add_parser(
+        "notify-submissions", help="Заново прислать админам уведомления о сдачах"
+    )
+    notify_subs.add_argument("--assessment", default=None)
+
     students_cmd = sub.add_parser("students", help="Список студентов")
     students_flags = students_cmd.add_mutually_exclusive_group()
     students_flags.add_argument("--registered", action="store_true")
@@ -859,6 +887,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(cmd_import_db_credentials(args.file, args.dry_run))
     if args.command == "broadcast":
         return asyncio.run(cmd_broadcast(args.text, args.group))
+    if args.command == "notify-submissions":
+        return asyncio.run(cmd_notify_submissions(args.assessment))
     if args.command == "students":
         flag: bool | None = None
         if args.registered:

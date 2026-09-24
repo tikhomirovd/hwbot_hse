@@ -79,8 +79,8 @@ journalctl -u hwbot -f
 - `/missing 1` — кто не сдал
 - `/export 1` — CSV
 
-При каждой сдаче и пересдаче бот пишет всем `ADMIN_TELEGRAM_IDS`: кто, какая
-работа, ссылка, в срок или с опозданием.
+При каждой сдаче и пересдаче бот пишет всем `ADMIN_TELEGRAM_IDS`: кто, @username
+(если ника нет — ссылка `tg://user?id=`), какая работа, ссылка, в срок или нет.
 
 `/newhw` больше нет: элементы контроля живут в `course.toml`.
 
@@ -98,6 +98,8 @@ uv run hwbot gradebook --out /tmp/gradebook.csv
 
 uv run hwbot broadcast --text "Семинар в субботу переносится"
 uv run hwbot broadcast --group 262 --text "Опрос по семинару"
+uv run hwbot notify-submissions
+uv run hwbot notify-submissions --assessment hw1
 
 uv run hwbot overview
 

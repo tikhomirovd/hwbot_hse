@@ -1,6 +1,43 @@
 from __future__ import annotations
 
-from hwbot.telegramutil import display_payload, escape_html, payload_html, split_long_text
+from hwbot.models import Student
+from hwbot.telegramutil import (
+    display_payload,
+    escape_html,
+    payload_html,
+    split_long_text,
+    telegram_contact_html,
+)
+
+
+def _student(
+    *,
+    telegram_id: int | None = 1,
+    telegram_username: str | None = "ivanov",
+) -> Student:
+    return Student(
+        1,
+        "Иванов Иван Иванович",
+        "БАЦРФ261",
+        "ivanov@example.edu",
+        telegram_id,
+        telegram_username,
+    )
+
+
+def test_telegram_contact_prefers_username() -> None:
+    assert telegram_contact_html(_student()) == "@ivanov"
+    assert telegram_contact_html(_student(telegram_username="@ivanov")) == "@ivanov"
+    assert telegram_contact_html(_student(telegram_id=None)) == "@ivanov"
+
+
+def test_telegram_contact_falls_back_to_id_link() -> None:
+    html = telegram_contact_html(_student(telegram_username=None))
+    assert html == '<a href="tg://user?id=1">написать в личку</a>'
+    assert telegram_contact_html(_student(telegram_id=None, telegram_username=None)) == ""
+    assert telegram_contact_html(_student(telegram_username="  ")) == (
+        '<a href="tg://user?id=1">написать в личку</a>'
+    )
 
 
 def test_escape_payload_does_not_keep_html() -> None:

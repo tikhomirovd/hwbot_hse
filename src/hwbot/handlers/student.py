@@ -325,6 +325,13 @@ async def _store_submission(
         return
     await state.clear()
     await message.answer(_accepted_text(homework, submission, previous, now))
+    user = message.from_user
+    if (
+        user is not None
+        and student.telegram_id is not None
+        and user.id == student.telegram_id
+    ):
+        student = await db.bind_telegram(student.id, user.id, user.username)
     await _notify_admins_about_submission(
         message, settings, student, homework, submission, previous
     )

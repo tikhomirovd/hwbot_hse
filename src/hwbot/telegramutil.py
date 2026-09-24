@@ -6,12 +6,24 @@ from typing import Any
 
 from aiogram.types import Message
 
+from hwbot.models import Student
+
 MESSAGE_LIMIT = 3500
 _PRE_BLOCK = re.compile(r"(<pre(?:\s[^>]*)?>.*?</pre>)", re.DOTALL | re.IGNORECASE)
 
 
 def escape_html(value: str) -> str:
     return html.escape(value, quote=True)
+
+
+def telegram_contact_html(student: Student) -> str:
+    """Контакт студента для админского уведомления: @username или ссылка по id."""
+    username = (student.telegram_username or "").strip().lstrip("@")
+    if username:
+        return f"@{escape_html(username)}"
+    if student.telegram_id is not None:
+        return f'<a href="tg://user?id={student.telegram_id}">написать в личку</a>'
+    return ""
 
 
 def payload_plain(payload: str) -> str:

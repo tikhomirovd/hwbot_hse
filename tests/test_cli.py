@@ -38,6 +38,9 @@ def test_broadcast_and_students_parsers() -> None:
     assert registered.registered
     missing = build_parser().parse_args(["students", "--missing"])
     assert missing.missing
+    notify = build_parser().parse_args(["notify-submissions", "--assessment", "hw1"])
+    assert notify.command == "notify-submissions"
+    assert notify.assessment == "hw1"
     unbind = build_parser().parse_args(["unbind", "--student", "Иванов"])
     assert unbind.student == "Иванов"
 

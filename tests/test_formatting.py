@@ -352,6 +352,7 @@ def test_admin_submission_notice_first_and_update() -> None:
     on_time = Submission(1, 1, 1, "https://github.com/x/hw", homework.deadline_ts or 1)
     text = admin_submission_notice(student, homework, on_time, previous=None)
     assert "Иванов Иван Иванович (БАЦРФ261) сдал <b>ДЗ-1</b>" in text
+    assert "@a" in text
     assert '<a href="https://github.com/x/hw">' in text
     assert "в срок" in text
     assert "обновил" not in text
@@ -362,6 +363,11 @@ def test_admin_submission_notice_first_and_update() -> None:
     assert "просто текст" in updated
     assert "<a " not in updated
     assert "на 1 день позже дедлайна" in updated
+
+    nameless = Student(2, "Петрова Анна Сергеевна", "БАЦРФ261", "p@example.edu", 99, None)
+    fallback = admin_submission_notice(nameless, homework, on_time, previous=None)
+    assert 'href="tg://user?id=99"' in fallback
+    assert "написать в личку" in fallback
 
 
 def test_format_status_report_lists_payloads() -> None:

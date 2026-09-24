@@ -28,7 +28,13 @@ from hwbot.overview import (
     CourseOverview,
     LessonAttendanceGap,
 )
-from hwbot.telegramutil import display_payload, escape_html, payload_html, payload_plain
+from hwbot.telegramutil import (
+    display_payload,
+    escape_html,
+    payload_html,
+    payload_plain,
+    telegram_contact_html,
+)
 from hwbot.timeutil import (
     format_human_datetime,
     format_human_day,
@@ -116,8 +122,12 @@ def admin_submission_notice(
     work = escape_html(work_name(assessment))
     when = format_human_datetime(submission.submitted_at)
     timing = submission_timing_phrase(assessment, submission)
+    contact = telegram_contact_html(student)
+    head = f"{name} ({group}) {verb} <b>{work}</b>"
+    if contact:
+        head = f"{head}\n{contact}"
     return (
-        f"{name} ({group}) {verb} <b>{work}</b>\n\n"
+        f"{head}\n\n"
         f"{payload_html(submission.payload)}\n"
         f"{when} · {timing}"
     )
