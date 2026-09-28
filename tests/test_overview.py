@@ -14,7 +14,7 @@ from hwbot.course import Lesson as CourseLesson
 from hwbot.db import Database
 from hwbot.formatting import format_course_overview
 from hwbot.handlers.admin import cmd_overview
-from hwbot.models import Lesson, Student
+from hwbot.models import Lesson, Student, Submission
 from hwbot.overview import (
     ActionSummary,
     AssessmentOverview,
@@ -26,6 +26,7 @@ from hwbot.overview import (
     build_action_summary,
     build_attendance_overview,
     build_course_overview,
+    submission_timeliness,
 )
 from hwbot.roster import load_roster
 from hwbot.telegramutil import MESSAGE_LIMIT, answer_long
@@ -121,6 +122,50 @@ async def test_assessment_with_submitted_and_missing(seeded: Database) -> None:
     assert item.open_for_submissions is True
 
 
+def test_timeliness_uses_the_same_deadline_boundary_as_grading() -> None:
+    on_time = Submission(1, 1, 1, "https://git/a", 100)
+    late = Submission(2, 2, 1, "https://git/b", 101)
+    assert submission_timeliness(None, {1: on_time}) == (None, None)
+    assert submission_timeliness(100, {1: on_time, 2: late}) == (1, 1)
+    assert submission_timeliness(100, {}) == (0, 0)
+
+
+async def test_latest_submission_splits_on_time_and_late(seeded: Database) -> None:
+    homework_id = await open_homework(seeded)
+    homework = await seeded.get_assessment(homework_id)
+    assert homework is not None and homework.deadline_ts is not None
+    deadline = homework.deadline_ts
+    students = await seeded.list_students()
+    await seeded.add_submission(
+        students[0].id, homework_id, "https://git/early", deadline - 60
+    )
+    await seeded.add_submission(
+        students[1].id, homework_id, "https://git/exact", deadline
+    )
+    await seeded.add_submission(
+        students[2].id, homework_id, "https://git/late", deadline + 1
+    )
+    await seeded.add_submission(
+        students[3].id, homework_id, "https://git/first", deadline - 10
+    )
+    await seeded.add_submission(
+        students[3].id, homework_id, "https://git/again", deadline + 3600
+    )
+
+    overview = await build_course_overview(seeded, deadline + DAY)
+    item = overview.assessments[0]
+    assert item.submitted == 4
+    assert item.on_time == 2
+    assert item.late == 2
+    assert item.on_time + item.late == item.submitted
+    for text in (
+        format_course_overview(overview),
+        format_overview_text(overview),
+    ):
+        assert "в срок 2" in text
+        assert "после дедлайна 2" in text
+
+
 async def test_not_submitted_yet_is_not_a_teacher_action(seeded: Database) -> None:
     await open_homework(seeded)
     for index, student in enumerate(await seeded.list_students()):
@@ -128,9 +173,14 @@ async def test_not_submitted_yet_is_not_a_teacher_action(seeded: Database) -> No
     overview = await build_course_overview(seeded, NOW)
     item = overview.assessments[0]
     assert item.submitted == 0
+    assert item.on_time == 0
+    assert item.late == 0
     assert item.missing == 4
     assert overview.actions.awaiting_review == 0
     assert not overview.actions.has_actions
+    text = format_course_overview(overview)
+    assert "в срок" not in text
+    assert "после дедлайна" not in text
 
 
 async def test_submission_without_grade_awaits_review(seeded: Database) -> None:
@@ -400,6 +450,8 @@ async def test_cli_and_telegram_agree_on_the_same_numbers(seeded: Database) -> N
     for text in (terminal, telegram):
         assert "сдали 1" in text
         assert "пока не сдали 3" in text
+        assert "в срок 1" in text
+        assert "после дедлайна 0" in text
         assert "проверено 0" in text
         assert "ждут проверки 1" in text
         assert "без отметки 3 из 4" in text
@@ -507,6 +559,8 @@ def test_telegram_overview_escapes_dynamic_text() -> None:
                 open_for_submissions=True,
                 submitted=1,
                 missing=0,
+                on_time=None,
+                late=None,
                 reviewed=0,
                 awaiting_review=1,
             ),

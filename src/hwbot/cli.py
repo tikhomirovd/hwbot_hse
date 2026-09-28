@@ -217,9 +217,20 @@ def _overview_assessment_line(item: AssessmentOverview) -> str:
     parts = [
         f"сдали {item.submitted}",
         f"{not_submitted} {item.missing}",
-        f"проверено {item.reviewed}",
-        f"ждут проверки {item.awaiting_review}",
     ]
+    if item.submitted and item.on_time is not None and item.late is not None:
+        parts.extend(
+            (
+                f"в срок {item.on_time}",
+                f"после дедлайна {item.late}",
+            )
+        )
+    parts.extend(
+        (
+            f"проверено {item.reviewed}",
+            f"ждут проверки {item.awaiting_review}",
+        )
+    )
     return f"{head}\t{', '.join(parts)}"
 
 

@@ -33,6 +33,8 @@ class AssessmentOverview:
     open_for_submissions: bool
     submitted: int
     missing: int
+    on_time: int | None
+    late: int | None
     reviewed: int
     awaiting_review: int
 
@@ -120,6 +122,22 @@ def is_operationally_relevant(
     )
 
 
+def submission_timeliness(
+    deadline_ts: int | None, submissions: Mapping[int, Submission]
+) -> tuple[int | None, int | None]:
+    """Сколько последних сдач уложилось в дедлайн и сколько пришло позже.
+
+    None, None — у работы нет дедлайна, делить не на что.
+    Граница та же, что у штрафа: submitted_at <= deadline считается в срок.
+    """
+    if deadline_ts is None:
+        return None, None
+    on_time = sum(
+        1 for submission in submissions.values() if submission.submitted_at <= deadline_ts
+    )
+    return on_time, len(submissions) - on_time
+
+
 def build_assessment_overview(
     assessment: Assessment,
     student_ids: frozenset[int],
@@ -137,6 +155,7 @@ def build_assessment_overview(
         for student_id, submission in submitted.items()
         if needs_review(submission, grades.get(student_id))
     )
+    on_time, late = submission_timeliness(assessment.deadline_ts, submitted)
     return AssessmentOverview(
         code=assessment.code,
         label=assessment.label,
@@ -144,6 +163,8 @@ def build_assessment_overview(
         open_for_submissions=is_accept_open(assessment, now),
         submitted=len(submitted),
         missing=len(student_ids) - len(submitted),
+        on_time=on_time,
+        late=late,
         reviewed=len(submitted) - awaiting,
         awaiting_review=awaiting,
     )

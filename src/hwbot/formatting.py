@@ -1033,11 +1033,23 @@ def _overview_assessment_lines(item: AssessmentOverview) -> list[str]:
     if not item.open_for_submissions:
         head = f"{head} · приём закрыт"
     not_submitted = "пока не сдали" if item.open_for_submissions else "не сдали"
-    return [
+    lines = [
         f"<b>{head}</b>",
         f"— сдали {item.submitted}, {not_submitted} {item.missing}",
-        f"— проверено {item.reviewed}, ждут проверки {item.awaiting_review}",
     ]
+    timeliness = _timeliness_line(item)
+    if timeliness is not None:
+        lines.append(timeliness)
+    lines.append(
+        f"— проверено {item.reviewed}, ждут проверки {item.awaiting_review}"
+    )
+    return lines
+
+
+def _timeliness_line(item: AssessmentOverview) -> str | None:
+    if item.submitted == 0 or item.on_time is None or item.late is None:
+        return None
+    return f"— в срок {item.on_time}, после дедлайна {item.late}"
 
 
 def _overview_gap_line(gap: LessonAttendanceGap) -> str:
