@@ -797,8 +797,8 @@ summary = """
 и декларация ИИ. Защита — 5 минут онлайн по записи в слот."""
 submit_via_bot = true
 issued_at = 2026-09-19T16:00:00+03:00
-deadline = 2026-10-25T23:59:00+03:00
-accept_until = 2026-11-01T23:59:00+03:00
+deadline = 2026-10-28T23:59:00+03:00
+accept_until = 2026-11-04T23:59:00+03:00
 defense_from = 2026-10-26
 defense_to = 2026-11-06
 late_rule = "project1"
