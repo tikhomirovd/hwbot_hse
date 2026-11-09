@@ -101,8 +101,8 @@ def _student(db_login: str | None, db_password: str | None) -> Student:
 
 def test_access_text_contains_both_ports() -> None:
     text = db_access_text(_student("ivanov", "s3cret"))
-    assert "ivanov:s3cret@2.56.240.205:5432/prime?sslmode=require" in text
-    assert "ivanov:s3cret@2.56.240.205:443/prime?sslmode=require" in text
+    assert "ivanov:s3cret@62.83.95.62:5432/prime?sslmode=require" in text
+    assert "ivanov:s3cret@62.83.95.62:443/prime?sslmode=require" in text
     assert "PRIME_DSN=" in text
 
 
