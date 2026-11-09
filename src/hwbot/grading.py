@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from dataclasses import dataclass, replace
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from enum import Enum
 
 from hwbot.course import Assessment, AttendanceScale, Course, LateRule, Lesson
@@ -21,6 +21,11 @@ class ItemStatus(Enum):
     OPEN = "open"
     MISSED = "missed"
     UPCOMING = "upcoming"
+
+
+# Исход известен: проверено или не сдано до закрытия приёма (это ноль).
+# Сданное и непроверенное сюда не входит — ни в «сейчас», ни в «можно было набрать».
+COUNTED = frozenset({ItemStatus.GRADED, ItemStatus.MISSED})
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,9 @@ class ComponentLine:
     weight: float
     score_now: float | None
     items: tuple[ItemResult, ...]
+    # Баллы из 10 по проверенному и сколько по нему можно было набрать; None — проверять нечего.
+    points_now: float | None = None
+    points_possible: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +82,51 @@ class GradeReport:
     attendance_score_forecast: float | None
     components: tuple[ComponentLine, ...]
     items: tuple[ItemResult, ...]
+    # «Сейчас N из 10» и «к этому дню можно было набрать M» — только по проверенному.
+    points_now: float | None = None
+    points_possible: float | None = None
 
 
 def round_half_up(value: float, digits: int = 0) -> float:
     quant = Decimal(1).scaleb(-digits)
     return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))
+
+
+def round_parts(parts: Sequence[Decimal], digits: int = 2) -> tuple[list[float], float]:
+    """Округлить слагаемые так, чтобы они сложились ровно в округлённую сумму.
+
+    Метод наибольших остатков. Без него 0,375 + 1,125 показались бы как 0,38 + 1,13 = 1,51
+    при сумме 1,50, и в разбивке нашлась бы лишняя сотая.
+    """
+    unit = Decimal(1).scaleb(-digits)
+    total = sum(parts, Decimal(0)).quantize(unit, rounding=ROUND_HALF_UP)
+    rounded = [part.quantize(unit, rounding=ROUND_FLOOR) for part in parts]
+    rest = int((total - sum(rounded, Decimal(0))) / unit)
+    by_remainder = sorted(
+        range(len(parts)), key=lambda i: parts[i] - rounded[i], reverse=True
+    )
+    for i in by_remainder[:rest]:
+        rounded[i] += unit
+    return [float(value) for value in rounded], float(total)
+
+
+def _dec(value: float) -> Decimal:
+    return Decimal(str(value))
+
+
+def counted_points(
+    items: Sequence[ItemResult], score_max: float
+) -> tuple[Decimal, Decimal] | None:
+    """Баллы из 10 за элементы с известным исходом и сколько за них можно было набрать."""
+    counted = [item for item in items if item.status in COUNTED]
+    if not counted:
+        return None
+    now = sum(
+        (_dec(item.weight_final) * _dec(item.applied_score or 0.0) for item in counted),
+        Decimal(0),
+    )
+    possible = sum((_dec(item.weight_final) * _dec(score_max) for item in counted), Decimal(0))
+    return now, possible
 
 
 def attendance_percent(present: int, absent: int, excused: int) -> float | None:
@@ -137,11 +185,7 @@ def apply_late(rule: LateRule, raw: float, days: int) -> float:
 
 def component_score(items: Sequence[ItemResult], mode: Mode) -> float | None:
     if mode is Mode.NOW:
-        counted = [
-            item
-            for item in items
-            if item.status in {ItemStatus.GRADED, ItemStatus.MISSED}
-        ]
+        counted = [item for item in items if item.status in COUNTED]
         if not counted:
             return None
         weight_sum = sum(item.weight_final for item in counted)
@@ -347,6 +391,32 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
         and forecast is not None
         and exam_for_forecast < course.exam_blocking_threshold
     )
+    exact: dict[str, tuple[Decimal, Decimal]] = {}
+    for line in component_lines:
+        if line.key == "attendance":
+            if att_now is not None:
+                weight = _dec(line.weight)
+                exact[line.key] = (weight * _dec(att_now), weight * _dec(course.score_max))
+            continue
+        points = counted_points(line.items, course.score_max)
+        if points is not None:
+            exact[line.key] = points
+    points_now: float | None = None
+    points_possible: float | None = None
+    if exact:
+        keys = list(exact)
+        now_parts, points_now = round_parts([exact[key][0] for key in keys])
+        possible_parts, points_possible = round_parts([exact[key][1] for key in keys])
+        by_key = dict(zip(keys, zip(now_parts, possible_parts, strict=True), strict=True))
+        component_lines = [
+            replace(line, points_now=by_key[line.key][0], points_possible=by_key[line.key][1])
+            if line.key in by_key
+            else line
+            for line in component_lines
+        ]
+        exam_known = exam_item is not None and exam_item.status in COUNTED
+        if exam_known and exam_for_forecast < course.exam_blocking_threshold:
+            points_now = min(points_now, course.final_cap_when_blocked)
     return GradeReport(
         heading_to=heading,
         in_pocket=pocket,
@@ -366,6 +436,8 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
         attendance_score_forecast=att_forecast,
         components=tuple(component_lines),
         items=items,
+        points_now=points_now,
+        points_possible=points_possible,
     )
 
 

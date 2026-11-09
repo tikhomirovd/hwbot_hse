@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from hwbot.course import DEFAULT_COURSE_PATH, load_course
@@ -17,6 +19,7 @@ from hwbot.grading import (
     final_score,
     late_penalty,
     round_half_up,
+    round_parts,
 )
 from hwbot.timeutil import parse_deadline
 
@@ -239,6 +242,53 @@ def test_three_numbers_november_example() -> None:
     assert round_half_up(report.in_pocket, 1) == 3.8
     assert report.if_nothing == 3.0
     assert report.exam_blocked
+
+
+def test_points_count_only_known_results() -> None:
+    state, now = _nov21_state()
+    report = build_report(state, COURSE, now)
+    # Посещаемость 7·0,10 + ПР (8+7)·0,025 + ДЗ (9+9)·0,0625 + Проект 8·0,20 = 3,80.
+    # ДЗ-3 и ПР-3 ждут проверки — их нет ни в «сейчас», ни в «можно было набрать».
+    assert report.points_now == 3.80
+    assert report.points_possible == 4.75
+    by_key = {line.key: line for line in report.components}
+    assert (by_key["attendance"].points_now, by_key["attendance"].points_possible) == (0.70, 1.00)
+    # 0,375 и 1,125 вместе дают одну сотую сверх 0,37 + 1,12: она уходит первому.
+    assert (by_key["quizzes"].points_now, by_key["quizzes"].points_possible) == (0.38, 0.50)
+    assert (by_key["homework"].points_now, by_key["homework"].points_possible) == (1.12, 1.25)
+    assert by_key["project1"].points_now == 1.60
+    assert by_key["exam"].points_now is None
+    parts = [line.points_now or 0.0 for line in report.components]
+    assert round_half_up(sum(parts), 2) == report.points_now
+
+
+def test_points_missed_counts_as_zero_and_exam_blocks() -> None:
+    exam = COURSE.assessment_by_code("exam")
+    assert exam.accept_until_ts is not None
+    now = exam.accept_until_ts + 60
+    state = StudentState("262", {}, frozenset(), {}, {"project1": 10})
+    report = build_report(state, COURSE, now)
+    # Несданное после закрытия приёма — ноль, и в «можно было набрать» оно входит.
+    homework = next(line for line in report.components if line.key == "homework")
+    assert homework.points_now == 0.0
+    assert homework.points_possible == 2.5
+    # Проект 2 + проверочные 1,5 = 3,5, но экзамен не сдан → ноль → итог не выше 3.
+    quizzes = {code: 10.0 for code in ("quiz1", "quiz2", "quiz3", "quiz4", "final_test")}
+    graded = build_report(
+        StudentState("262", {}, frozenset(), {}, {"project1": 10, **quizzes}),
+        COURSE,
+        now,
+    )
+    assert graded.points_now == COURSE.final_cap_when_blocked == 3.0
+    assert graded.points_possible == 9.0
+
+
+def test_round_parts_sum_matches_total() -> None:
+    parts, total = round_parts([Decimal("0.375"), Decimal("1.125"), Decimal("0.7")])
+    assert parts == [0.38, 1.12, 0.7]
+    assert total == 2.2
+    parts, total = round_parts([Decimal("0.3333"), Decimal("0.3333"), Decimal("0.3334")])
+    assert round_half_up(sum(parts), 2) == total == 1.0
 
 
 def test_build_item_late_penalty() -> None:

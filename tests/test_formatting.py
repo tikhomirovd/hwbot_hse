@@ -93,13 +93,22 @@ def test_grade_report_november_text() -> None:
     )
     text = format_grade_report(build_report(state, course, now), course)
     assert "оценка на 21 ноября" in text.casefold() or "21 ноября" in text
-    assert "8,1" in text
-    assert "3,8" in text
-    assert "остановиться" in text
-    assert "поставлено 10, за просрочку −1, итог 9" in text
+    assert "<b>Сейчас 3,80 из 10</b>" in text
+    assert "можно было набрать 4,75 — у тебя 80% возможного" in text
+    assert "<b>Посещаемость</b> — до 1 балла из 10" in text
+    assert "<b>0,70</b> из 1,00 возможных · оценка 7" in text
+    assert "был на 16 из 18 прошедших занятий (89%)" in text
+    assert "<b>Проверочные работы</b> — до 1,5 балла из 10" in text
+    assert "<b>0,38</b> из 0,50 возможных · оценка 7,5" in text
+    assert "<b>1,12</b> из 1,25 возможных · оценка 9" in text
+    assert "<b>Проект 1</b> — до 2 баллов из 10" in text
+    assert "ДЗ-2 — 9 (поставлено 10, за просрочку −1, итог 9)" in text
+    assert "ПР-3 — ждёт проверки" in text
+    assert "ДЗ-3 — сдано, ждёт проверки" in text
+    assert "остановиться" not in text
+    assert "Идёшь" not in text
     assert "потол" not in text
-    assert "ждёт проверки" in text
-    assert "<pre>" in text
+    assert "<pre>" not in text
     assert "перекличк" not in text
     assert "напиши преподавателю" not in text.casefold()
 

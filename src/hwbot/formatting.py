@@ -816,65 +816,85 @@ def _item_reason(item: ItemResult, course: Course, now: int) -> str:
     return "ещё не выдано"
 
 
+def _points_genitive(value: float) -> str:
+    """«до 1 балла», «до 1,5 балла», «до 2 баллов»."""
+    if value != int(value):
+        return "балла"
+    points = int(value)
+    return "балла" if points % 10 == 1 and points % 100 != 11 else "баллов"
+
+
+def _item_line(item: ItemResult, course: Course, now: int) -> str:
+    reason = _item_reason(item, course, now)
+    if item.status is ItemStatus.GRADED:
+        mark = format_points(item.applied_score or 0.0)
+        return f"{item.label} — {mark}" + (f" ({reason})" if reason else "")
+    if item.status is ItemStatus.MISSED:
+        return f"{item.label} — 0 ({reason})"
+    return f"{item.label} — {reason}"
+
+
 def format_grade_breakdown(report: GradeReport, course: Course) -> str:
-    lines: list[str] = []
+    blocks: list[str] = []
     for component in report.components:
-        weight_pct = int(round_half_up(component.weight * 100, 0))
-        head = f"{component.title} · вес {weight_pct}%"
-        score = format_score(component.score_now)
-        lines.append(f"{head:<36}{score}")
-        if component.key == "attendance":
-            held = report.attendance_held
+        cap = round_half_up(component.weight * course.score_max, 2)
+        lines = [
+            f"<b>{escape_html(component.title)}</b> — до {format_points(cap)} "
+            f"{_points_genitive(cap)} из {format_points(course.score_max)}"
+        ]
+        if component.points_now is not None and component.points_possible is not None:
             lines.append(
-                f"  {report.attendance_present} из {held} прошедших занятий, "
-                f"пропусков {report.attendance_absent}"
+                f"<b>{format_score(component.points_now, 2)}</b> из "
+                f"{format_score(component.points_possible, 2)} возможных · "
+                f"оценка {format_points(round_half_up(component.score_now or 0.0, 1))}"
             )
-            continue
-        if component.key == "exam":
+        if component.key == "attendance":
+            if report.attendance_held:
+                percent = report.attendance_percent_now
+                lines.append(
+                    f"был на {report.attendance_present} из {report.attendance_held} "
+                    f"прошедших занятий ({format_score(percent, 0)}%)"
+                )
+        elif component.key == "exam":
             exam = course.assessment_by_code("exam")
-            if exam.deadline_ts is not None:
+            if component.points_now is None and exam.deadline_ts is not None:
                 extra = f"сдать до {format_short_date(exam.deadline_ts)}"
                 defense = course.defense_ts_for(exam, report.seminar_group)
                 if defense is not None:
                     extra += f", защита {format_short_date(defense)}"
-                lines.append(f"  {extra}")
-            continue
-        if len(component.items) == 1:
-            item = component.items[0]
-            reason = _item_reason(item, course, report.as_of_ts)
+                lines.append(extra)
+        elif len(component.items) == 1:
+            reason = _item_reason(component.items[0], course, report.as_of_ts)
             if reason:
-                lines.append(f"  {reason}")
-            continue
-        for item in component.items:
-            mark = format_score(item.applied_score) if item.status is ItemStatus.GRADED else "—"
-            reason = _item_reason(item, course, report.as_of_ts)
-            pad = f"  {item.label}  {mark}"
-            if reason:
-                lines.append(f"{pad:<12}{reason}" if len(pad) < 12 else f"{pad}     {reason}")
-            else:
-                lines.append(pad)
-    return "\n".join(lines)
+                lines.append(reason)
+        else:
+            lines.extend(_item_line(item, course, report.as_of_ts) for item in component.items)
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def format_grade_report(report: GradeReport, course: Course) -> str:
-    if report.heading_to is None and report.in_pocket is None:
+    if report.points_now is None or report.points_possible is None:
         return (
             "📊 Считать пока нечего: ни одного балла и ни одной отметки о посещении.\n\n"
             "Первые числа появятся после первой отметки о посещении "
             "или первого выставленного балла."
         )
+    possible = f"К этому дню можно было набрать {format_score(report.points_possible, 2)}"
+    if report.points_possible > 0:
+        share = round_half_up(100 * report.points_now / report.points_possible, 0)
+        possible += f" — у тебя {format_score(share, 0)}% возможного"
     lines = [
         f"📊 <b>Твоя оценка на {format_day_month(report.as_of_ts)}</b>",
         "",
-        f"<b>Идёшь на {format_score(report.heading_to)} из 10</b>",
-        "Так выглядит курс, если дальше пойдёт как идёт: считаю только по проверенному.",
+        f"<b>Сейчас {format_score(report.points_now, 2)} из "
+        f"{format_points(course.score_max)}</b>",
+        f"{possible}.",
         "",
-        f"<b>В кармане {format_score(report.in_pocket)} из 7</b>",
-        "Это накопленная прямо сейчас. Непроверенное считаю нулём, поэтому в начале "
-        "семестра число маленькое — это нормально.",
+        "Считаю только проверенное. Что ждёт проверки, пока не входит ни в одно из чисел: "
+        "это не ноль, баллы добавятся после проверки.",
         "",
-        f"<b>Если остановиться совсем: {format_score(report.if_nothing)}</b>",
-        "Ничего больше не сдавать и не ходить.",
+        format_grade_breakdown(report, course),
     ]
     if report.exam_blocked:
         lines.extend(
@@ -884,8 +904,6 @@ def format_grade_report(report: GradeReport, course: Course) -> str:
                 "какой бы ни была накопленная.",
             ]
         )
-    breakdown = format_grade_breakdown(report, course)
-    lines.extend(["", f"<pre>{escape_html(breakdown)}</pre>"])
     return "\n".join(lines)
 
 
