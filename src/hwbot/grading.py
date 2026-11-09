@@ -64,9 +64,9 @@ class StudentState:
 
 @dataclass(frozen=True, slots=True)
 class GradeReport:
-    heading_to: float | None
+    # Накопленная по формуле ПУД из точных оценок, непроверенное — ноль. Из неё и экзамена
+    # считается официальная итоговая (выгрузка, «В ведомость»); студенту не показывается.
     in_pocket: float | None
-    if_nothing: float | None
     exam_blocked: bool
     as_of_ts: int
     seminar_group: str | None
@@ -82,9 +82,11 @@ class GradeReport:
     attendance_score_forecast: float | None
     components: tuple[ComponentLine, ...]
     items: tuple[ItemResult, ...]
-    # «Сейчас N из 10» и «к этому дню можно было набрать M» — только по проверенному.
+    # «Сейчас N из 10», «к этому дню можно было набрать M» и доля в процентах — только
+    # по проверенному. Одни и те же числа в /grade, /gradebook и выгрузке.
     points_now: float | None = None
     points_possible: float | None = None
+    points_share: float | None = None
 
 
 def round_half_up(value: float, digits: int = 0) -> float:
@@ -343,12 +345,9 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
     component_lines: list[ComponentLine] = []
     now_scores: dict[str, float] = {}
     pocket_scores: dict[str, float] = {}
-    forecast_scores: dict[str, float] = {}
     if att_now is not None:
         now_scores["attendance"] = att_now
         pocket_scores["attendance"] = att_now
-    if att_forecast is not None:
-        forecast_scores["attendance"] = att_forecast
     for component in course.components:
         if component.computed_from != "assessments":
             component_lines.append(
@@ -368,7 +367,6 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
             now_scores[component.key] = score_now
         if score_zero is not None:
             pocket_scores[component.key] = score_zero
-            forecast_scores[component.key] = score_zero
         component_lines.append(
             ComponentLine(
                 key=component.key,
@@ -378,19 +376,12 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
                 items=group,
             )
         )
-    heading = _heading_to(now_scores, course)
     empty = not now_scores
     pocket = None if empty else accumulated(pocket_scores, course)
     exam_item = next((item for item in items if item.component == "exam"), None)
     exam_now = None if exam_item is None else exam_item.applied_score
     exam_for_forecast = 0.0 if exam_now is None else exam_now
-    forecast_acc = accumulated(forecast_scores, course)
-    forecast = None if empty else final_score(forecast_acc, exam_for_forecast, course)
-    exam_blocked = (
-        not empty
-        and forecast is not None
-        and exam_for_forecast < course.exam_blocking_threshold
-    )
+    exam_blocked = not empty and exam_for_forecast < course.exam_blocking_threshold
     exact: dict[str, tuple[Decimal, Decimal]] = {}
     for line in component_lines:
         if line.key == "attendance":
@@ -417,10 +408,11 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
         exam_known = exam_item is not None and exam_item.status in COUNTED
         if exam_known and exam_for_forecast < course.exam_blocking_threshold:
             points_now = min(points_now, course.final_cap_when_blocked)
+    points_share: float | None = None
+    if points_now is not None and points_possible:
+        points_share = round_half_up(100 * points_now / points_possible, 0)
     return GradeReport(
-        heading_to=heading,
         in_pocket=pocket,
-        if_nothing=forecast,
         exam_blocked=exam_blocked,
         as_of_ts=now,
         seminar_group=state.seminar_group,
@@ -438,14 +430,5 @@ def build_report(state: StudentState, course: Course, now: int) -> GradeReport:
         items=items,
         points_now=points_now,
         points_possible=points_possible,
+        points_share=points_share,
     )
-
-
-def _heading_to(scores: Mapping[str, float], course: Course) -> float | None:
-    if not scores:
-        return None
-    weight_sum = sum(course.component(key).weight for key in scores)
-    if weight_sum == 0:
-        return None
-    total = sum(course.component(key).weight * score for key, score in scores.items())
-    return total / weight_sum

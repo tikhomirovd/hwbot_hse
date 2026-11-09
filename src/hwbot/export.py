@@ -82,7 +82,7 @@ def gradebook_csv(
         )
     for component in course.components:
         headers.append(component.title)
-    headers.extend(["Идёшь на", "В кармане", "Если ничего", "В ведомость"])
+    headers.extend(["Сейчас из 10", "Можно было набрать", "% возможного", "В ведомость"])
     writer.writerow(headers)
     for student, report in rows:
         items = {item.code: item for item in report.items}
@@ -117,9 +117,9 @@ def gradebook_csv(
                 official = _num(round_half_up(final, 0), 0)
         line.extend(
             [
-                _num(report.heading_to),
-                _num(report.in_pocket),
-                _num(report.if_nothing),
+                _num(report.points_now, 2),
+                _num(report.points_possible, 2),
+                _num(report.points_share, 0),
                 official,
             ]
         )

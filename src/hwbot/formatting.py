@@ -881,9 +881,8 @@ def format_grade_report(report: GradeReport, course: Course) -> str:
             "или первого выставленного балла."
         )
     possible = f"К этому дню можно было набрать {format_score(report.points_possible, 2)}"
-    if report.points_possible > 0:
-        share = round_half_up(100 * report.points_now / report.points_possible, 0)
-        possible += f" — у тебя {format_score(share, 0)}% возможного"
+    if report.points_share is not None:
+        possible += f" — у тебя {format_score(report.points_share, 0)}% возможного"
     lines = [
         f"📊 <b>Твоя оценка на {format_day_month(report.as_of_ts)}</b>",
         "",
@@ -1277,30 +1276,30 @@ def short_name(full_name: str) -> str:
     return " ".join([surname, "".join(f"{part[0]}." for part in rest)]).strip()
 
 
-def _board_score(value: float | None) -> str:
-    return "—" if value is None else f"{round_half_up(value, 1):.1f}".replace(".", ",")
-
-
 def format_gradebook_board(rows: Sequence[tuple[Student, GradeReport]]) -> list[str]:
-    """Ведомость строками: кто на что идёт. Одинакова в терминале и в боте."""
+    """Ведомость строками: те же числа, что студент видит в /grade. В терминале и в боте."""
     if not rows:
         return ["Студентов нет"]
     width = max(len(short_name(student.full_name)) for student, _ in rows)
-    lines = [f"{'студент'.ljust(width)}  гр.  идёшь  карман  ноль"]
+    lines = [f"{'студент'.ljust(width)}  гр.  сейчас  можно    %"]
     for student, report in sorted(rows, key=lambda row: row[0].full_name):
         lines.append(
             f"{short_name(student.full_name).ljust(width)}  "
             f"{student.group_code[-3:]}  "
-            f"{_board_score(report.heading_to).rjust(5)}  "
-            f"{_board_score(report.in_pocket).rjust(6)}  "
-            f"{_board_score(report.if_nothing).rjust(4)}"
+            f"{format_score(report.points_now, 2).rjust(6)}  "
+            f"{format_score(report.points_possible, 2).rjust(5)}  "
+            f"{format_score(report.points_share, 0).rjust(3)}"
         )
-    heading = [report.heading_to for _, report in rows if report.heading_to is not None]
-    if heading:
-        risk = sum(1 for value in heading if value < 4)
-        lines.append("")
-        lines.append(
-            f"студентов {len(rows)}, средняя «идёшь» "
-            f"{_board_score(sum(heading) / len(heading))}, ниже 4 — {risk}"
+    shares = [report.points_share for _, report in rows if report.points_share is not None]
+    if shares:
+        # 40 % возможного — это темп на 4 из 10, граница неуда.
+        risk = sum(1 for value in shares if value < 40)
+        lines.extend(
+            [
+                "",
+                f"студентов {len(rows)}, в среднем "
+                f"{format_score(sum(shares) / len(shares), 0)}% возможного",
+                f"меньше 40% возможного (темп ниже 4) — {risk}",
+            ]
         )
     return lines

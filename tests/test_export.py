@@ -63,5 +63,5 @@ def test_gradebook_empty_rows() -> None:
     text = gradebook_csv(course, [(student, report)])
     assert "ФИО" in text
     assert "ДЗ-1" in text
-    assert "Идёшь на" in text
+    assert "Сейчас из 10,Можно было набрать,% возможного,В ведомость" in text
     assert "Тест Тестов" in text

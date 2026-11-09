@@ -462,14 +462,13 @@ def test_gradebook_board() -> None:
     # по алфавиту, а не в порядке списка; имя сжато до инициалов
     assert lines[1].startswith("Антонов И.П.")
     assert lines[2].startswith("Яковлев П.И.")
-    # кто ходил и написал на 10 — выше того, кто не ходил и написал на 2
-    heading_good, heading_weak = rows[0][1].heading_to, rows[1][1].heading_to
-    assert heading_good is not None and heading_weak is not None
-    assert heading_good > heading_weak
-    assert any("студентов 2" in line and "ниже 4" in line for line in lines)
-    # десятичный разделитель — запятая, как во всех текстах бота
-    numbers = lines[1].split()[-3:]
-    assert numbers == ["1,2", "0,0", "0,0"]
+    # те же три числа, что в /grade: сейчас, можно было набрать, % возможного.
+    # Не ходил и написал на 2: 0 + 0,05 из 1,00 + 0,25. Ходил и написал на 10: всё из всего.
+    assert lines[0].endswith("сейчас  можно    %")
+    assert lines[1].split()[-3:] == ["0,05", "1,25", "4"]
+    assert lines[2].split()[-3:] == ["1,25", "1,25", "100"]
+    assert "студентов 2, в среднем 52% возможного" in lines
+    assert "меньше 40% возможного (темп ниже 4) — 1" in lines
     # строка влезает в телефон
     assert max(len(line) for line in lines) < 46
 

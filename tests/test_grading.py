@@ -157,12 +157,13 @@ def test_empty_report() -> None:
     )
     now = parse_deadline("2026-09-06 12:00")
     report = build_report(state, COURSE, now)
-    assert report.heading_to is None
     assert report.in_pocket is None
-    assert report.if_nothing is None
+    assert report.points_now is None
+    assert report.points_possible is None
+    assert report.points_share is None
 
 
-def test_attendance_only_heading() -> None:
+def test_attendance_only_points() -> None:
     lessons = [item.code for item in COURSE.lessons if item.kind == "lecture"]
     held = frozenset(lessons[:2])
     state = StudentState(
@@ -175,7 +176,7 @@ def test_attendance_only_heading() -> None:
     now = parse_deadline("2026-09-06 12:00")
     report = build_report(state, COURSE, now)
     assert report.attendance_score_now == 10
-    assert report.heading_to == 10
+    assert (report.points_now, report.points_possible, report.points_share) == (1.0, 1.0, 100)
 
 
 def _nov21_state() -> tuple[StudentState, int]:
@@ -216,7 +217,7 @@ def _nov21_state() -> tuple[StudentState, int]:
     return state, now
 
 
-def test_three_numbers_november_example() -> None:
+def test_november_example() -> None:
     state, now = _nov21_state()
     report = build_report(state, COURSE, now)
     assert report.attendance_score_now == 7
@@ -236,11 +237,9 @@ def test_three_numbers_november_example() -> None:
     assert hw3.status is ItemStatus.AWAITING
     quiz3 = next(item for item in report.items if item.code == "quiz3")
     assert quiz3.status is ItemStatus.AWAITING
-    assert report.heading_to is not None
-    assert round_half_up(report.heading_to, 1) == 8.1
     assert report.in_pocket is not None
     assert round_half_up(report.in_pocket, 1) == 3.8
-    assert report.if_nothing == 3.0
+    assert report.points_share == 80
     assert report.exam_blocked
 
 
