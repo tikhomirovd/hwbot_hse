@@ -14,13 +14,15 @@ Telegram-бот сбора ДЗ и оценки для 1 курса БАЦРФ (
 
 ## Где крутится
 
-- Код: `/root/hwbot`
-- Процесс: `systemd` юнит `hwbot.service`
-- Токен и админы: `/root/hwbot/.env` (не коммитить, не логировать)
-- SQLite: `/root/hwbot/data/bot.db`
-- Список студентов: `/root/hwbot/data/roster.csv` (ФИО, группа, почта; seminar_group
+- Сервер svc (`ssh svc`), код: `/opt/hwbot`. Код и `.venv` принадлежат root (git, uv и CLI — от root),
+  `data/` — системному пользователю `hwbot`, от него же работает бот
+- Процесс: `systemd` юнит `hwbot.service` (копия `deploy/hwbot.service`)
+- Токен и админы: `/opt/hwbot/.env` (root:hwbot, 640; не коммитить, не логировать)
+- SQLite: `/opt/hwbot/data/bot.db`
+- Список студентов: `/opt/hwbot/data/roster.csv` (ФИО, группа, почта; seminar_group
   берётся из group_code: 261 / 262; без дат рождения)
-- Бэкап базы: cron `17 4 * * * /root/hwbot/deploy/backup-db.sh` → `/root/backups/bot-YYYY-MM-DD.db`
+- Бэкап базы: cron `17 4 * * * /opt/hwbot/deploy/backup-db.sh` → `/root/backups/bot-YYYY-MM-DD.db`
+- До ноября 2026 бот жил на другом сервере в `/root/hwbot`, от root
 
 Рестарт:
 
@@ -87,7 +89,7 @@ journalctl -u hwbot -f
 
 ## Как делать рассылку, посещаемость и выгрузку из нового чата
 
-Сначала прочитай этот файл. Потом из `/root/hwbot`:
+Сначала прочитай этот файл. Потом на сервере (`ssh svc`) из `/opt/hwbot`, от root:
 
 ```bash
 uv run hwbot seed-course --dry-run

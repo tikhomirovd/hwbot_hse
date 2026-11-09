@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BACKUP_DIR=/root/backups
-DB=/root/hwbot/data/bot.db
+DB=/opt/hwbot/data/bot.db
 STAMP=$(date +%F)
 
 mkdir -p "$BACKUP_DIR"
