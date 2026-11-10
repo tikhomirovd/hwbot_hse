@@ -113,6 +113,39 @@ class HomeworkStatusRow:
 
 
 @dataclass(frozen=True, slots=True)
+class Team:
+    """Команда итогового проекта. Участники — в порядке вступления."""
+
+    id: int
+    name: str | None
+    members: tuple[Student, ...]
+
+
+TEAM_NAME_MIN = 2
+TEAM_NAME_MAX = 40
+
+
+def clean_team_name(raw: str) -> str | None:
+    """Название без лишних пробелов. Пустое — None, вне 2–40 символов — ValueError."""
+    name = " ".join(raw.split())
+    if not name:
+        return None
+    if not TEAM_NAME_MIN <= len(name) <= TEAM_NAME_MAX:
+        raise ValueError(f"Название — от {TEAM_NAME_MIN} до {TEAM_NAME_MAX} символов")
+    return name
+
+
+@dataclass(frozen=True, slots=True)
+class Invite:
+    """Приглашение без ответа: «присоединяйся ко мне». Ответ удаляет его из базы."""
+
+    id: int
+    inviter_id: int
+    invitee_id: int
+    created_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class ReminderTarget:
     assessment: Assessment
     student: Student

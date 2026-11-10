@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+import asyncio
 import sqlite3
 
 import aiosqlite
@@ -13,10 +14,15 @@ from hwbot.course import Assessment as CourseAssessment
 from hwbot.course import Lesson as CourseLesson
 from hwbot.errors import (
     AlreadyBoundError,
+    AlreadyInTeamError,
     DeadlineClosedError,
     HomeworkNotFoundError,
+    InviteGoneError,
+    NotInTeamError,
     NotIssuedError,
     StudentTakenError,
+    TeamFullError,
+    TeamNotFoundError,
 )
 from hwbot.models import (
     Assessment,
@@ -24,10 +30,13 @@ from hwbot.models import (
     DbCredential,
     Grade,
     HomeworkStatusRow,
+    Invite,
     Lesson,
     RosterRow,
     Student,
     Submission,
+    Team,
+    clean_team_name,
 )
 from hwbot.reconcile import assessment_changes, lesson_changes
 from hwbot.timeutil import is_deadline_open, now_ts
@@ -118,10 +127,58 @@ CREATE TABLE IF NOT EXISTS reminders_sent (
     FOREIGN KEY (student_id) REFERENCES students(id)
 );
 
+CREATE TABLE IF NOT EXISTS teams (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT,
+    created_at INTEGER NOT NULL
+);
+
+-- student_id — первичный ключ: в двух командах сразу студент не окажется,
+-- и держит это база, а не проверка в коде.
+CREATE TABLE IF NOT EXISTS team_members (
+    student_id INTEGER PRIMARY KEY,
+    team_id    INTEGER NOT NULL,
+    joined_at  INTEGER NOT NULL,
+    FOREIGN KEY (student_id) REFERENCES students(id),
+    FOREIGN KEY (team_id)    REFERENCES teams(id)
+);
+
+-- Только приглашения без ответа: ответ, отзыв и погасание удаляют строку.
+-- AUTOINCREMENT не отдаёт новому приглашению номер удалённого, поэтому
+-- старая кнопка «Принять» не попадёт в чужое приглашение.
+CREATE TABLE IF NOT EXISTS team_invites (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    inviter_id INTEGER NOT NULL,
+    invitee_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (inviter_id, invitee_id),
+    FOREIGN KEY (inviter_id) REFERENCES students(id),
+    FOREIGN KEY (invitee_id) REFERENCES students(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_attendance_lesson ON attendance(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_grades_assessment ON grades(assessment_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_pair  ON submissions(student_id, assessment_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_team ON team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_invites_invitee ON team_invites(invitee_id);
 """
+
+_TEAM_SELECT = """
+    SELECT t.id AS team_id, t.name AS team_name, s.*
+    FROM teams t
+    JOIN team_members m ON m.team_id = t.id
+    JOIN students s ON s.id = m.student_id
+"""
+
+_INVITE_COLUMNS = "id, inviter_id, invitee_id, created_at"
+
+def _invite_from_row(row: aiosqlite.Row) -> Invite:
+    return Invite(
+        id=int(row["id"]),
+        inviter_id=int(row["inviter_id"]),
+        invitee_id=int(row["invitee_id"]),
+        created_at=int(row["created_at"]),
+    )
 
 
 def _student_from_row(row: aiosqlite.Row) -> Student:
@@ -224,6 +281,10 @@ class Database:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._conn: aiosqlite.Connection | None = None
+        # ponytail: один замок на все записи о командах — между await-ами
+        # обработчики перемежаются, и «проверил, потом записал» иначе гоняется.
+        # Если команд станет много, хватит замка на команду.
+        self._team_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -1014,3 +1075,272 @@ class Database:
             (int(row["assessment_id"]), int(row["student_id"]), str(row["window"]))
             for row in await cursor.fetchall()
         }
+
+    # Команды итогового проекта. Соединение одно на весь бот, поэтому здесь
+    # нет rollback(): он снёс бы и чужую незакоммиченную запись. Ошибку
+    # исправляем удалением своего, неудачную вставку закрываем commit().
+    # Отправка, ответ на приглашение и выход идут под self._team_lock; внутри
+    # него зовём только методы без замка: он не реентерабельный.
+
+    async def _teams_where(self, where: str, params: tuple[object, ...]) -> list[Team]:
+        conn = self._require()
+        cursor = await conn.execute(
+            f"{_TEAM_SELECT} {where} ORDER BY t.id, m.joined_at, m.student_id",
+            params,
+        )
+        found: dict[int, tuple[str | None, list[Student]]] = {}
+        for row in await cursor.fetchall():
+            name = None if row["team_name"] is None else str(row["team_name"])
+            entry = found.setdefault(int(row["team_id"]), (name, []))
+            entry[1].append(_student_from_row(row))
+        return [
+            Team(id=team_id, name=name, members=tuple(members))
+            for team_id, (name, members) in found.items()
+        ]
+
+    async def list_teams(self) -> list[Team]:
+        return await self._teams_where("", ())
+
+    async def get_team(self, team_id: int) -> Team | None:
+        teams = await self._teams_where("WHERE t.id = ?", (team_id,))
+        return teams[0] if teams else None
+
+    async def team_of_student(self, student_id: int) -> Team | None:
+        teams = await self._teams_where(
+            "WHERE t.id = (SELECT team_id FROM team_members WHERE student_id = ?)",
+            (student_id,),
+        )
+        return teams[0] if teams else None
+
+    async def create_team(
+        self, student_ids: Sequence[int], *, max_size: int, now: int | None = None
+    ) -> Team:
+        if not student_ids or len(set(student_ids)) != len(student_ids):
+            raise ValueError("Нужны разные студенты, хотя бы один")
+        if len(student_ids) > max_size:
+            raise TeamFullError("В команде больше людей, чем можно")
+        conn = self._require()
+        moment = now_ts() if now is None else now
+        cursor = await conn.execute("INSERT INTO teams (created_at) VALUES (?)", (moment,))
+        assert cursor.lastrowid is not None
+        team_id = int(cursor.lastrowid)
+        try:
+            for student_id in student_ids:
+                await conn.execute(
+                    "INSERT INTO team_members (student_id, team_id, joined_at) "
+                    "VALUES (?, ?, ?)",
+                    (student_id, team_id, moment),
+                )
+        except sqlite3.IntegrityError as exc:
+            await conn.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+            await conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
+            await conn.commit()
+            raise AlreadyInTeamError("Студент уже в команде") from exc
+        await conn.commit()
+        team = await self.get_team(team_id)
+        assert team is not None
+        return team
+
+    async def join_team(
+        self, team_id: int, student_id: int, *, max_size: int, now: int | None = None
+    ) -> Team:
+        conn = self._require()
+        moment = now_ts() if now is None else now
+        # Проверка места и вставка — один запрос: двое не займут последнее место разом.
+        try:
+            cursor = await conn.execute(
+                """
+                INSERT INTO team_members (student_id, team_id, joined_at)
+                SELECT ?, id, ? FROM teams
+                WHERE id = ?
+                  AND (SELECT COUNT(*) FROM team_members WHERE team_id = teams.id) < ?
+                """,
+                (student_id, moment, team_id, max_size),
+            )
+        except sqlite3.IntegrityError as exc:
+            await conn.commit()
+            raise AlreadyInTeamError("Студент уже в команде") from exc
+        await conn.commit()
+        team = await self.get_team(team_id)
+        if team is None:
+            raise TeamNotFoundError("Команды нет")
+        if cursor.rowcount == 0:
+            raise TeamFullError("Команда заполнена")
+        return team
+
+    async def leave_team(
+        self, student_id: int, *, dissolve: bool = False
+    ) -> tuple[Team, list[Invite]]:
+        """Убрать студента из команды: команда, какой была до выхода, и погасшие приглашения.
+
+        dissolve=True — так выходят через бота: от пары не остаётся команды из
+        одного, второй тоже оказывается без команды. CLI зовёт без него, чтобы
+        преподаватель мог убрать одного и добавить другого.
+        """
+        async with self._team_lock:
+            team = await self.team_of_student(student_id)
+            if team is None:
+                raise NotInTeamError("Студент не в команде")
+            conn = self._require()
+            leaving = [student_id]
+            remaining = [member.id for member in team.members if member.id != student_id]
+            if dissolve and len(remaining) == 1:
+                leaving += remaining
+            for leaver in leaving:
+                await conn.execute("DELETE FROM team_members WHERE student_id = ?", (leaver,))
+            # Пустая команда удаляется. Условие — в запросе: если кто-то успел
+            # вступить, команда останется.
+            await conn.execute(
+                """
+                DELETE FROM teams
+                WHERE id = ?
+                  AND NOT EXISTS (SELECT 1 FROM team_members WHERE team_id = teams.id)
+                """,
+                (team.id,),
+            )
+            # Ушедший больше не зовёт людей в прежнюю команду.
+            dropped = await self._drop_invites([student_id])
+            await conn.commit()
+        return team, dropped
+
+    async def rename_team(self, team_id: int, raw: str) -> str | None:
+        """Записать название (пустое — убрать) и вернуть то, что записано."""
+        name = clean_team_name(raw)
+        conn = self._require()
+        await conn.execute("UPDATE teams SET name = ? WHERE id = ?", (name, team_id))
+        await conn.commit()
+        return name
+
+    async def list_invites(self) -> list[Invite]:
+        conn = self._require()
+        cursor = await conn.execute(f"SELECT {_INVITE_COLUMNS} FROM team_invites ORDER BY id")
+        return [_invite_from_row(row) for row in await cursor.fetchall()]
+
+    async def send_invite(
+        self, inviter_id: int, invitee_id: int, *, max_size: int, now: int | None = None
+    ) -> Invite | None:
+        """Позвать к себе в команду. None — такое приглашение уже ждёт ответа.
+
+        Ждущих ответа у команды (у одиночки — у него самого) не больше, чем
+        свободных мест: иначе на последнее место согласятся двое.
+        """
+        if inviter_id == invitee_id:
+            raise ValueError("Себя не позвать")
+        async with self._team_lock:
+            conn = self._require()
+            if await self.team_of_student(invitee_id) is not None:
+                raise AlreadyInTeamError("Студент уже в команде")
+            cursor = await conn.execute(
+                "SELECT 1 FROM team_invites WHERE inviter_id = ? AND invitee_id = ?",
+                (inviter_id, invitee_id),
+            )
+            if await cursor.fetchone() is not None:
+                return None
+            team = await self.team_of_student(inviter_id)
+            members = [member.id for member in team.members] if team else [inviter_id]
+            marks = ", ".join("?" for _ in members)
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) FROM team_invites WHERE inviter_id IN ({marks})", members
+            )
+            row = await cursor.fetchone()
+            pending = 0 if row is None else int(row[0])
+            if len(members) + pending >= max_size:
+                raise TeamFullError("Свободных мест не осталось")
+            moment = now_ts() if now is None else now
+            cursor = await conn.execute(
+                "INSERT INTO team_invites (inviter_id, invitee_id, created_at) VALUES (?, ?, ?)",
+                (inviter_id, invitee_id, moment),
+            )
+            await conn.commit()
+        assert cursor.lastrowid is not None
+        return Invite(
+            id=int(cursor.lastrowid),
+            inviter_id=inviter_id,
+            invitee_id=invitee_id,
+            created_at=moment,
+        )
+
+    async def take_invite(
+        self, invite_id: int, student_id: int, *, as_inviter: bool
+    ) -> Invite | None:
+        """Забрать приглашение: отказ — адресатом, отзыв — автором.
+
+        Роль — в условии запроса: чужое приглашение так не взять, а второе
+        нажатие получает None.
+        """
+        column = "inviter_id" if as_inviter else "invitee_id"
+        async with self._team_lock:
+            conn = self._require()
+            cursor = await conn.execute(
+                f"DELETE FROM team_invites WHERE id = ? AND {column} = ? "
+                f"RETURNING {_INVITE_COLUMNS}",
+                (invite_id, student_id),
+            )
+            rows = list(await cursor.fetchall())
+            await conn.commit()
+        return _invite_from_row(rows[0]) if rows else None
+
+    async def accept_invite(
+        self, invite_id: int, invitee_id: int, *, max_size: int, now: int | None = None
+    ) -> tuple[Team, list[Invite]]:
+        """Принять приглашение: команда после вступления и погасшие приглашения.
+
+        У автора нет команды — появляется команда из двоих; есть — адресат
+        вступает в неё (место проверяет join_team одним запросом).
+        """
+        async with self._team_lock:
+            conn = self._require()
+            cursor = await conn.execute(
+                f"SELECT {_INVITE_COLUMNS} FROM team_invites WHERE id = ? AND invitee_id = ?",
+                (invite_id, invitee_id),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise InviteGoneError("Приглашения нет")
+            invite = _invite_from_row(row)
+            try:
+                if await self.team_of_student(invitee_id) is not None:
+                    raise AlreadyInTeamError("Студент уже в команде")
+                team = await self.team_of_student(invite.inviter_id)
+                if team is None:
+                    team = await self.create_team(
+                        [invite.inviter_id, invitee_id], max_size=max_size, now=now
+                    )
+                else:
+                    team = await self.join_team(team.id, invitee_id, max_size=max_size, now=now)
+            except (AlreadyInTeamError, TeamFullError, TeamNotFoundError):
+                # исполнить нельзя — и ждать больше нечего
+                await conn.execute("DELETE FROM team_invites WHERE id = ?", (invite.id,))
+                await conn.commit()
+                raise
+            await conn.execute("DELETE FROM team_invites WHERE id = ?", (invite.id,))
+            # Гаснут приглашения тем, кто теперь в команде, и от вступившего:
+            # его «присоединяйся ко мне» звало не в эту команду.
+            dropped = await self._drop_invites([invitee_id])
+            await conn.commit()
+        return team, dropped
+
+    async def drop_invites(self, *, inviters: Sequence[int] = ()) -> list[Invite]:
+        """Погасить приглашения после смены состава в обход бота — из CLI."""
+        async with self._team_lock:
+            dropped = await self._drop_invites(inviters)
+            await self._require().commit()
+        return dropped
+
+    async def _drop_invites(self, inviters: Sequence[int]) -> list[Invite]:
+        """Удалить приглашения, которые уже не исполнить, и вернуть их; commit — за вызывающим.
+
+        Гаснут приглашения тем, кто уже в команде, и от тех, кто сменил
+        команду (`inviters`).
+        """
+        conn = self._require()
+        condition = "invitee_id IN (SELECT student_id FROM team_members)"
+        params = list(inviters)
+        if params:
+            condition += f" OR inviter_id IN ({', '.join('?' for _ in params)})"
+        cursor = await conn.execute(
+            f"DELETE FROM team_invites WHERE {condition} RETURNING {_INVITE_COLUMNS}",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return sorted((_invite_from_row(row) for row in rows), key=lambda item: item.id)

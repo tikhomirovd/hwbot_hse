@@ -9,7 +9,11 @@ from aiogram.exceptions import TelegramAPIError
 from hwbot.config import Settings
 from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
-from hwbot.formatting import admin_submission_notice, new_homework_announcement
+from hwbot.formatting import (
+    admin_submission_notice,
+    new_homework_announcement,
+    team_reminder_text,
+)
 from hwbot.grading import days_late
 from hwbot.models import Assessment, ReminderTarget, Student, Submission
 from hwbot.reminders import (
@@ -38,6 +42,13 @@ async def broadcast_text(
         if group_codes is not None
         else await db.list_students()
     )
+    return await send_to_students(bot, students, text)
+
+
+async def send_to_students(
+    bot: MessageSender, students: Sequence[Student], text: str
+) -> int:
+    """Разослать текст тем, кто зашёл в бота. Ошибка у одного не мешает остальным."""
     sent = 0
     for student in students:
         if student.telegram_id is None:
@@ -45,7 +56,7 @@ async def broadcast_text(
         try:
             await bot.send_message(student.telegram_id, text)
         except TelegramAPIError:
-            logger.warning("broadcast failed for student_id=%s", student.id)
+            logger.warning("send failed for student_id=%s", student.id)
             continue
         sent += 1
     return sent
@@ -143,5 +154,40 @@ async def send_due_reminders(
             logger.warning("reminder failed for student_id=%s", target.student.id)
             continue
         await db.mark_reminder_sent(target.assessment.id, target.student.id, target.window)
+        sent += 1
+    return sent + await send_team_reminders(bot, db, now=moment, course=loaded)
+
+
+TEAM_WINDOW = "team_lock"
+
+
+async def send_team_reminders(
+    bot: MessageSender, db: Database, *, now: int, course: Course
+) -> int:
+    """Одно напоминание до закрытия сборки каждому, кто ещё без команды.
+
+    Повторы отсекает reminders_sent — по строке экзамена: внешний ключ
+    требует работу, а напоминание про команду к экзамену и относится.
+    """
+    teams = course.teams
+    if teams.remind_at_ts is None or not teams.remind_at_ts <= now <= teams.lock_at_ts:
+        return 0
+    exam = next((item for item in await db.list_assessments() if item.code == "exam"), None)
+    if exam is None:
+        return 0
+    in_team = {member.id for team in await db.list_teams() for member in team.members}
+    done = await db.sent_reminder_keys()
+    sent = 0
+    for student in await db.list_students():
+        if student.telegram_id is None or student.id in in_team:
+            continue
+        if (exam.id, student.id, TEAM_WINDOW) in done:
+            continue
+        try:
+            await bot.send_message(student.telegram_id, team_reminder_text(teams))
+        except TelegramAPIError:
+            logger.warning("team reminder failed for student_id=%s", student.id)
+            continue
+        await db.mark_reminder_sent(exam.id, student.id, TEAM_WINDOW, now)
         sent += 1
     return sent

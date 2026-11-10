@@ -35,5 +35,25 @@ class CourseError(HwbotError):
     pass
 
 
+class TeamNotFoundError(HwbotError):
+    pass
+
+
+class TeamFullError(HwbotError):
+    pass
+
+
+class AlreadyInTeamError(HwbotError):
+    pass
+
+
+class NotInTeamError(HwbotError):
+    pass
+
+
+class InviteGoneError(HwbotError):
+    """Приглашения уже нет: на него ответили, его отозвали или оно погасло."""
+
+
 class StaleCourseStateError(CourseError):
     pass

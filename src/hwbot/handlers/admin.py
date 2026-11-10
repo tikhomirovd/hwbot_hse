@@ -15,6 +15,7 @@ from hwbot.formatting import (
     format_status_board,
     format_status_report,
     format_students_report,
+    format_teams_board,
 )
 from hwbot.models import Assessment
 from hwbot.ops import reports_for_students
@@ -102,6 +103,24 @@ async def cmd_gradebook(
         "по проверенному, «можно» — сколько к этому дню можно было набрать, "
         f"% — доля от возможного.\n\n<pre>{board}</pre>",
     )
+
+
+@router.message(Command("teams"))
+async def cmd_teams(
+    message: Message,
+    db: Database,
+    settings: Settings,
+) -> None:
+    if not await _admin_ok(message, settings):
+        return
+    lines = format_teams_board(
+        await db.list_teams(),
+        await db.list_students(),
+        load_course(DEFAULT_COURSE_PATH).teams,
+        now_ts(),
+        pending=len(await db.list_invites()),
+    )
+    await answer_long(message, escape_html("\n".join(lines)))
 
 
 @router.message(Command("students"))

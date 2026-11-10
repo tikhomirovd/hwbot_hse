@@ -16,12 +16,12 @@ from hwbot.bot import run_bot
 from hwbot.config import load_settings
 from hwbot.course import DEFAULT_COURSE_PATH, Course, load_course
 from hwbot.db import Database
-from hwbot.errors import HomeworkNotFoundError
-from hwbot.export import gradebook_csv, status_csv
-from hwbot.formatting import format_gradebook_board, format_status_report
+from hwbot.errors import HomeworkNotFoundError, HwbotError
+from hwbot.export import gradebook_csv, status_csv, teams_csv
+from hwbot.formatting import format_gradebook_board, format_status_report, format_teams_board
 from hwbot.groups import UnknownGroupError, canonical_seminar_group, parse_groups
 from hwbot.notify import broadcast_text, notify_admins_latest_submissions
-from hwbot.models import DbCredential, Student
+from hwbot.models import DbCredential, Student, Team
 from hwbot.overview import (
     ActionSummary,
     AssessmentOverview,
@@ -776,6 +776,172 @@ async def cmd_set_seminar_group(
         await db.close()
 
 
+# Команды итогового проекта. lock_at здесь не действует: после закрытия сборки
+# состав меняет только преподаватель — этими командами. Студентам CLI ничего не пишет.
+
+
+async def run_team_list(db: Database, course: Course) -> int:
+    lines = format_teams_board(
+        await db.list_teams(),
+        await db.list_students(),
+        course.teams,
+        now_ts(),
+        pending=len(await db.list_invites()),
+    )
+    print("\n".join(lines))
+    return 0
+
+
+async def _team_by_number(db: Database, team_ref: str) -> Team | None:
+    raw = team_ref.strip()
+    return await db.get_team(int(raw)) if raw.isdigit() else None
+
+
+async def run_team_export(db: Database, output: Path | None) -> int:
+    csv_text = teams_csv(await db.list_teams(), await db.list_students())
+    if output is None:
+        sys.stdout.write(csv_text)
+        return 0
+    output.write_text(csv_text, encoding="utf-8")
+    print(f"Записал {output}")
+    return 0
+
+
+async def run_team_add(
+    db: Database, course: Course, team_ref: str, student_query: str, *, dry_run: bool
+) -> int:
+    team = await _team_by_number(db, team_ref)
+    if team is None:
+        print(f"Нет команды {team_ref}", file=sys.stderr)
+        return 1
+    matched = resolve_student(student_query, await db.list_students())
+    if isinstance(matched, MatchFailure):
+        print(f"{matched.query}: {matched.reason}", file=sys.stderr)
+        return 1
+    current = await db.team_of_student(matched.id)
+    if current is not None:
+        print(
+            f"{matched.full_name} уже в команде {current.id} — сначала hwbot team remove",
+            file=sys.stderr,
+        )
+        return 1
+    limit = course.teams.max_size
+    if len(team.members) >= limit:
+        print(f"Команда {team.id} заполнена: {len(team.members)} из {limit}", file=sys.stderr)
+        return 1
+    if not dry_run:
+        try:
+            team = await db.join_team(team.id, matched.id, max_size=limit)
+        except HwbotError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        # приглашения ему и от него погасли; студентам CLI не пишет, увидят в /team
+        await db.drop_invites(inviters=[matched.id])
+    size = len(team.members) + (1 if dry_run else 0)
+    prefix = "dry-run, " if dry_run else ""
+    print(f"{prefix}{matched.full_name} → команда {team.id}, в ней {size} из {limit}")
+    return 0
+
+
+async def run_team_remove(db: Database, student_query: str, *, dry_run: bool) -> int:
+    matched = resolve_student(student_query, await db.list_students())
+    if isinstance(matched, MatchFailure):
+        print(f"{matched.query}: {matched.reason}", file=sys.stderr)
+        return 1
+    team = await db.team_of_student(matched.id)
+    if team is None:
+        print(f"{matched.full_name} не в команде", file=sys.stderr)
+        return 1
+    if not dry_run:
+        # без dissolve: убрать одного и добавить другого — обычный ход преподавателя
+        await db.leave_team(matched.id)
+    left = len(team.members) - 1
+    tail = f"в ней {left}" if left else "команда пустая — удаляется"
+    prefix = "dry-run, " if dry_run else ""
+    print(f"{prefix}{matched.full_name} ← из команды {team.id}, {tail}")
+    return 0
+
+
+async def run_team_create(
+    db: Database, course: Course, students_raw: str, *, dry_run: bool
+) -> int:
+    names = split_names(students_raw)
+    if not names:
+        print("Нужен хотя бы один студент", file=sys.stderr)
+        return 1
+    found, failed = resolve_all(names, await db.list_students())
+    if failed:
+        _print_failures(failed)
+        return 1
+    if len({student.id for student in found}) != len(found):
+        print("Один и тот же студент указан дважды", file=sys.stderr)
+        return 1
+    limit = course.teams.max_size
+    if len(found) > limit:
+        print(f"В команде не больше {limit} человек, указано {len(found)}", file=sys.stderr)
+        return 1
+    busy = False
+    for student in found:
+        current = await db.team_of_student(student.id)
+        if current is not None:
+            print(f"{student.full_name} уже в команде {current.id}", file=sys.stderr)
+            busy = True
+    if busy:
+        return 1
+    names_text = ", ".join(student.full_name for student in found)
+    if dry_run:
+        print(f"dry-run, новая команда: {names_text}")
+    else:
+        try:
+            team = await db.create_team([student.id for student in found], max_size=limit)
+        except HwbotError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        await db.drop_invites(inviters=[student.id for student in found])
+        print(f"Создал команду {team.id}: {names_text}")
+    if len(found) < course.teams.min_size:
+        print(f"в команде {len(found)} — меньше {course.teams.min_size}")
+    return 0
+
+
+async def run_team_rename(db: Database, team_ref: str, name: str) -> int:
+    team = await _team_by_number(db, team_ref)
+    if team is None:
+        print(f"Нет команды {team_ref}", file=sys.stderr)
+        return 1
+    try:
+        saved = await db.rename_team(team.id, name)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Команда {team.id}: " + (f"название «{saved}»" if saved else "без названия"))
+    return 0
+
+
+async def _dispatch_team(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    course = load_course(DEFAULT_COURSE_PATH)
+    db = await _with_db(settings.db_path)
+    try:
+        if args.team_command == "list":
+            return await run_team_list(db, course)
+        if args.team_command == "export":
+            return await run_team_export(db, args.out)
+        if args.team_command == "add":
+            return await run_team_add(
+                db, course, args.team, args.student, dry_run=args.dry_run
+            )
+        if args.team_command == "rename":
+            return await run_team_rename(db, args.team, args.name)
+        if args.team_command == "remove":
+            return await run_team_remove(db, args.student, dry_run=args.dry_run)
+        if args.team_command == "create":
+            return await run_team_create(db, course, args.students, dry_run=args.dry_run)
+        return 2
+    finally:
+        await db.close()
+
+
 async def _dispatch_attendance(args: argparse.Namespace) -> int:
     if args.att_command == "mark":
         return await cmd_attendance_mark(
@@ -884,6 +1050,25 @@ def build_parser() -> argparse.ArgumentParser:
     seminar.add_argument("--student")
     seminar.add_argument("--group")
     seminar.add_argument("--from-roster", action="store_true")
+
+    team = sub.add_parser("team", help="Команды итогового проекта")
+    team_sub = team.add_subparsers(dest="team_command", required=True)
+    team_sub.add_parser("list", help="Команды и кто без команды")
+    team_exp = team_sub.add_parser("export", help="Выгрузить в CSV: без --out печатает")
+    team_exp.add_argument("--out", type=Path)
+    team_add = team_sub.add_parser("add", help="Добавить студента в команду")
+    team_add.add_argument("--team", required=True, help="номер из team list")
+    team_add.add_argument("--student", required=True, help="ФИО или почта")
+    team_add.add_argument("--dry-run", action="store_true")
+    team_ren = team_sub.add_parser("rename", help="Название команды; пустое — убрать")
+    team_ren.add_argument("--team", required=True, help="номер из team list")
+    team_ren.add_argument("--name", required=True)
+    team_rm = team_sub.add_parser("remove", help="Убрать студента из команды")
+    team_rm.add_argument("--student", required=True, help="ФИО или почта")
+    team_rm.add_argument("--dry-run", action="store_true")
+    team_new = team_sub.add_parser("create", help="Создать команду из студентов")
+    team_new.add_argument("--students", required=True, help="ФИО или почты через запятую")
+    team_new.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -929,6 +1114,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(
             cmd_set_seminar_group(args.student, args.group, args.from_roster)
         )
+    if args.command == "team":
+        return asyncio.run(_dispatch_team(args))
     parser.error(f"unknown command: {args.command}")
     return 2
 

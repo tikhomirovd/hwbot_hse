@@ -78,3 +78,33 @@ def match_students(query: str, students: Sequence[Student]) -> MatchResult:
     if best >= STRONG_SCORE:
         return MatchResult(close[:5], "fuzzy_ambiguous")
     return MatchResult((), "fuzzy_miss")
+
+
+def search_students(query: str, students: Sequence[Student]) -> list[Student]:
+    """Поиск однокурсника: каждое слово запроса — начало какого-то слова ФИО.
+
+    «петр ан» найдёт Петрову Анну, регистр и «ё» не важны. Если так никого
+    нет — опечатка: каждое слово запроса похоже на какое-то слово ФИО
+    («иваноф» → Иванов).
+    """
+    words = normalize_text(query).split()
+    if not words:
+        return []
+    hits = [
+        student
+        for student in students
+        if all(
+            any(part.startswith(word) for part in normalize_text(student.full_name).split())
+            for word in words
+        )
+    ]
+    if hits:
+        return sorted(hits, key=lambda student: normalize_text(student.full_name))
+    scored: list[tuple[float, Student]] = []
+    for student in students:
+        parts = normalize_text(student.full_name).split()
+        score = min(max(fuzz.ratio(word, part) for part in parts) for word in words)
+        if score >= WEAK_SCORE:
+            scored.append((score, student))
+    scored.sort(key=lambda item: (-item[0], normalize_text(item[1].full_name)))
+    return [student for _score, student in scored]

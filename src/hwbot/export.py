@@ -5,8 +5,26 @@ import io
 
 from hwbot.course import Course
 from hwbot.grading import GradeReport, final_score, late_penalty, round_half_up
-from hwbot.models import Assessment, HomeworkStatusRow, Student
+from hwbot.models import Assessment, HomeworkStatusRow, Student, Team
 from hwbot.timeutil import format_dt
+
+
+def teams_csv(teams: list[Team], students: list[Student]) -> str:
+    """Все студенты: сначала по командам, потом без команды (пустые team и name)."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["team", "name", "full_name", "group_code", "email"])
+    in_team: set[int] = set()
+    for team in teams:
+        for member in team.members:
+            in_team.add(member.id)
+            writer.writerow(
+                [team.id, team.name or "", member.full_name, member.group_code, member.email]
+            )
+    for student in students:
+        if student.id not in in_team:
+            writer.writerow(["", "", student.full_name, student.group_code, student.email])
+    return buffer.getvalue()
 
 
 def status_csv(assessment: Assessment, rows: list[HomeworkStatusRow]) -> str:

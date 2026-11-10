@@ -102,6 +102,19 @@ class Assessment:
 
 
 @dataclass(frozen=True, slots=True)
+class Teams:
+    """Сборка команд итогового проекта: размер и момент, после которого состав меняет только преподаватель."""
+
+    min_size: int
+    max_size: int
+    lock_at_ts: int
+    remind_at_ts: int | None = None  # одно напоминание тем, кто ещё без команды
+
+    def is_open(self, now: int) -> bool:
+        return now <= self.lock_at_ts
+
+
+@dataclass(frozen=True, slots=True)
 class Course:
     code: str
     title: str
@@ -119,6 +132,7 @@ class Course:
     late_rules: tuple[LateRule, ...]
     lessons: tuple[Lesson, ...]
     assessments: tuple[Assessment, ...]
+    teams: Teams
 
     def component(self, key: str) -> Component:
         for item in self.components:
@@ -202,6 +216,20 @@ def _parse_course(raw: Mapping[str, object]) -> Course:
         late_rules=late_rules,
         lessons=lessons,
         assessments=assessments,
+        teams=_parse_teams(_table(raw.get("teams"), "teams"), tz_name),
+    )
+
+
+def _parse_teams(raw: Mapping[str, object], tz_name: str) -> Teams:
+    return Teams(
+        min_size=_int(raw.get("min_size"), "teams.min_size"),
+        max_size=_int(raw.get("max_size"), "teams.max_size"),
+        lock_at_ts=_to_ts(raw.get("lock_at"), tz_name, "teams.lock_at"),
+        remind_at_ts=(
+            None
+            if raw.get("remind_at") is None
+            else _to_ts(raw.get("remind_at"), tz_name, "teams.remind_at")
+        ),
     )
 
 
@@ -437,6 +465,16 @@ def _validate_course(course: Course) -> None:
                 f"У элемента {assessment.code} deadline должен быть раньше accept_until"
             )
     _validate_scale(course.attendance_scale)
+    teams = course.teams
+    # Команда из одного человека в боте не бывает: она появляется, когда
+    # приглашение принял второй, и распадается, когда пара расходится.
+    if not 2 <= teams.min_size <= teams.max_size:
+        raise CourseError(
+            "В [teams] нужно 2 ≤ min_size ≤ max_size, "
+            f"сейчас {teams.min_size} и {teams.max_size}"
+        )
+    if teams.remind_at_ts is not None and teams.remind_at_ts >= teams.lock_at_ts:
+        raise CourseError("В [teams] remind_at должен быть раньше lock_at")
     _ = zone(course.timezone)
 
 
@@ -457,17 +495,6 @@ def _validate_seminar_weekdays(course: Course) -> None:
                 f"Семинар {lesson.code} группы {lesson.seminar_group} должен быть "
                 f"в {_WEEKDAY_RU[expected]}, сейчас {_WEEKDAY_RU[actual]}"
             )
-    for assessment in course.assessments:
-        for group, ts in assessment.defense_by_group:
-            expected = SEMINAR_WEEKDAY.get(group)
-            if expected is None:
-                continue
-            actual = _weekday_of(ts, course.timezone)
-            if actual != expected:
-                raise CourseError(
-                    f"Защита {assessment.code} группы {group} должна быть "
-                    f"в {_WEEKDAY_RU[expected]}, сейчас {_WEEKDAY_RU[actual]}"
-                )
 
 
 def _validate_scale(scale: AttendanceScale) -> None:

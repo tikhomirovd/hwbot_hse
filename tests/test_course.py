@@ -53,9 +53,14 @@ def test_load_real_course() -> None:
             continue
         weekday = datetime.fromtimestamp(lesson.starts_ts, tz).weekday()
         assert weekday == SEMINAR_WEEKDAY[lesson.seminar_group]
+    # С 09.11.2026 защита — в сессию, а не на семинаре группы. ПУД: решение сдаётся
+    # не позднее чем за 3 календарных дня до защиты — включая приём с вычетом.
     exam = course.assessment_by_code("exam")
-    for group, ts in exam.defense_by_group:
-        assert datetime.fromtimestamp(ts, tz).weekday() == SEMINAR_WEEKDAY[group]
+    assert exam.accept_until_ts is not None
+    last_day = datetime.fromtimestamp(exam.accept_until_ts, tz).date()
+    assert exam.defense_by_group
+    for _group, ts in exam.defense_by_group:
+        assert (datetime.fromtimestamp(ts, tz).date() - last_day).days >= 3
 
 
 def test_broken_weight_sum(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ from hwbot.config import (
     PRIME_DB_NAME,
     PRIME_DB_PORT,
 )
-from hwbot.course import Course, LateRule, Lesson as CourseLesson
+from hwbot.course import Course, LateRule, Lesson as CourseLesson, Teams
 from hwbot.grading import (
     GradeReport,
     ItemResult,
@@ -20,7 +20,16 @@ from hwbot.grading import (
     late_penalty,
     round_half_up,
 )
-from hwbot.models import Assessment, HomeworkStatusRow, Student, Submission
+from hwbot.models import (
+    TEAM_NAME_MAX,
+    TEAM_NAME_MIN,
+    Assessment,
+    HomeworkStatusRow,
+    Invite,
+    Student,
+    Submission,
+    Team,
+)
 from hwbot.overview import (
     ActionSummary,
     AssessmentOverview,
@@ -360,6 +369,7 @@ def help_text() -> str:
         "📎 /mysubmissions — что уже сдано и с каким баллом\n"
         "📊 /grade — оценка и из чего она складывается\n"
         "🗓 /attendance — посещаемость\n"
+        "📌 /team — команда для итогового проекта\n"
         "📌 /db — доступ к учебной базе ПРАЙМ\n"
         "🔄 /cancel — выйти из любого диалога\n\n"
         "<b>Про сроки</b>\n\n"
@@ -525,11 +535,21 @@ def fallback_reply(text: str, open_works: list[Assessment]) -> str:
 
 
 def submit_prompt(assessment: Assessment) -> str:
+    if assessment.code == "exam":
+        what = (
+            "Пришли ссылку на репозиторий команды одним сообщением "
+            "(вида github.com/владелец/репозиторий). Ссылку присылает каждый "
+            "участник команды сам: сдача засчитывается каждому отдельно."
+        )
+    else:
+        what = (
+            "Пришли ссылку на pull request одним сообщением "
+            "(вида github.com/…/prime-monitor/pull/N). "
+            "Если работа не в гите — просто текстом."
+        )
     return (
         f"📤 Сдаём <b>{work_heading(assessment)}</b>\n\n"
-        "Пришли ссылку на pull request одним сообщением "
-        "(вида github.com/…/prime-monitor/pull/N). "
-        "Если работа не в гите — просто текстом.\n\n"
+        f"{what}\n\n"
         "Передумал — /cancel"
     )
 
@@ -1302,4 +1322,297 @@ def format_gradebook_board(rows: Sequence[tuple[Student, GradeReport]]) -> list[
                 f"меньше 40% возможного (темп ниже 4) — {risk}",
             ]
         )
+    return lines
+
+
+# ── Команды итогового проекта ─────────────────────────────────────────
+# О студентах — без рода: «Петрова А.С.: приглашение отклонено», а не «отклонила».
+
+
+def _people_word(count: int) -> str:
+    if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14}:
+        return "человека"
+    return "человек"
+
+
+def team_size_text(teams: Teams) -> str:
+    """«2–3 человека»."""
+    if teams.min_size == teams.max_size:
+        return f"{teams.max_size} {_people_word(teams.max_size)}"
+    return f"{teams.min_size}–{teams.max_size} {_people_word(teams.max_size)}"
+
+
+def _person(student: Student) -> str:
+    """«Иванов Иван Иванович, 261»."""
+    return f"{escape_html(student.full_name)}, {escape_html(short_group(student.group_code))}"
+
+
+def _who(student: Student) -> str:
+    """«Иванов И.И.» — в уведомлениях и на кнопках."""
+    return escape_html(short_name(student.full_name))
+
+
+def teams_locked_text(teams: Teams) -> str:
+    """Без разметки: идёт и во всплывающие подсказки."""
+    return (
+        f"Сборка команд закрыта {format_human_dt(teams.lock_at_ts)}. "
+        "Менять состав теперь может только преподаватель — если нужно, напиши ему."
+    )
+
+
+def format_team_card(
+    team: Team | None,
+    incoming: Sequence[tuple[Invite, Student]],
+    outgoing: Sequence[tuple[Invite, Student]],
+    teams: Teams,
+    now: int,
+) -> str:
+    """Карточка /team. incoming — кто зовёт тебя, outgoing — кого позвала команда."""
+    lock = format_human_dt(teams.lock_at_ts)
+    is_open = teams.is_open(now)
+    if team is None:
+        lines = ["📌 <b>Команда для итогового проекта</b>", ""]
+        if not is_open:
+            lines.append(
+                f"Ты не в команде. Сборка закрылась {lock} — теперь команды составляет "
+                "преподаватель, он тебя и распределит."
+            )
+            return "\n".join(lines)
+        lines.append(
+            f"Итоговый проект делается командой: {team_size_text(teams)}. "
+            f"Собраться нужно до {lock} — кто останется без команды, "
+            "того распределит преподаватель."
+        )
+        if incoming:
+            lines.extend(["", "Тебя зовут:"])
+            lines.extend(f"— {_person(inviter)}" for _invite, inviter in incoming)
+        if outgoing:
+            lines.extend(["", "⏳ Ждут ответа на твоё приглашение:"])
+            lines.extend(f"— {_person(invitee)}" for _invite, invitee in outgoing)
+        if not incoming and not outgoing:
+            lines.extend(
+                [
+                    "",
+                    "Найди однокурсников по фамилии или в списке тех, кто ещё без команды, "
+                    "и пригласи. Приглашённый ответит «Принять» или «Отказаться».",
+                ]
+            )
+        return "\n".join(lines)
+
+    title = (
+        f"📌 <b>Команда «{escape_html(team.name)}»</b>"
+        if team.name
+        else "📌 <b>Твоя команда</b> · без названия"
+    )
+    lines = [title, "", *(f"— {_person(member)}" for member in team.members)]
+    if not is_open:
+        lines.extend(["", teams_locked_text(teams)])
+        return "\n".join(lines)
+    if outgoing:
+        lines.extend(["", "⏳ Ждут ответа на приглашение:"])
+        lines.extend(f"— {_person(invitee)}" for _invite, invitee in outgoing)
+    size = len(team.members)
+    free = teams.max_size - size
+    lines.append("")
+    if size < teams.min_size:
+        lines.append(f"Нужно {team_size_text(teams)} — позови кого-нибудь до {lock}.")
+    elif free <= 0:
+        lines.append(f"Команда собрана: {size} из {teams.max_size}. Состав можно менять до {lock}.")
+    else:
+        place = "одного человека" if free == 1 else f"{free} человек"
+        lines.append(f"Есть место ещё для {place}. Состав можно менять до {lock}.")
+    if not team.name:
+        lines.append("Название можно задать кнопкой «Название».")
+    return "\n".join(lines)
+
+
+def format_people(heading: str, rows: Sequence[tuple[Student, str]], footer: str = "") -> str:
+    """Список однокурсников для поиска и «Кто без команды». Статус пустой — можно позвать."""
+    lines = [heading, ""]
+    for student, status in rows:
+        lines.append(f"— {_person(student)}" + (f" · {status}" if status else ""))
+    if footer:
+        lines.extend(["", footer])
+    return "\n".join(lines)
+
+
+def team_search_prompt() -> str:
+    return (
+        "Напиши фамилию однокурсника — хватит первых букв. "
+        "Можно добавить начало имени: «петр ан»."
+    )
+
+
+def team_search_short_text() -> str:
+    return "Нужно хотя бы две буквы. Напиши фамилию ещё раз."
+
+
+def team_search_heading(query: str, total: int, shown: int) -> str:
+    heading = f"По запросу «{escape_html(query)}» — {total} {_people_word(total)}:"
+    if shown < total:
+        heading += f" показываю первых {shown}, уточни запрос, если нужного нет."
+    return heading
+
+
+def team_search_empty_text(query: str) -> str:
+    return (
+        f"По запросу «{escape_html(query)}» никого не нашёл. Проверь фамилию "
+        "или открой список «Кто без команды»."
+    )
+
+
+def team_list_heading(total: int, page: int, pages: int) -> str:
+    if total == 0:
+        return "Без команды никого не осталось — все однокурсники уже в командах."
+    heading = f"Без команды — {total} {_people_word(total)}"
+    if pages > 1:
+        heading += f", страница {page + 1} из {pages}"
+    return f"{heading}:"
+
+
+def team_no_room_text() -> str:
+    return (
+        "Свободных мест нет: в команде и среди приглашённых уже столько людей, "
+        "сколько можно. Дождись ответа или отзови приглашение в /team."
+    )
+
+
+def team_name_prompt(current: str | None) -> str:
+    now_text = f"Сейчас: «{escape_html(current)}»." if current else "Сейчас названия нет."
+    return (
+        f"Напиши название команды — от {TEAM_NAME_MIN} до {TEAM_NAME_MAX} символов. "
+        f"{now_text}"
+    )
+
+
+def team_name_bad_text() -> str:
+    return (
+        f"Название — от {TEAM_NAME_MIN} до {TEAM_NAME_MAX} символов. Напиши ещё раз "
+        "или вернись к команде: /team"
+    )
+
+
+def team_invite_text(inviter: Student, team: Team | None, invitee: Student) -> str:
+    members = team.members if team is not None else (inviter,)
+    where = (
+        f"Команда «{escape_html(team.name)}», сейчас в ней:"
+        if team is not None and team.name
+        else "Сейчас в команде:"
+    )
+    lines = [
+        f"📌 {escape_html(inviter.full_name)} ({escape_html(short_group(inviter.group_code))}) "
+        "зовёт тебя в команду для итогового проекта.",
+        "",
+        where,
+        *(f"— {_person(member)}" for member in members),
+    ]
+    if any(member.group_code != invitee.group_code for member in members):
+        lines.extend(
+            ["", "Вы из разных групп: на предзащиту команда приходит вместе, в день одной из групп."]
+        )
+    lines.extend(
+        [
+            "",
+            "Принять можно только одно приглашение — остальные после этого погаснут. "
+            "Все приглашения видны и в /team.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def team_leave_confirm_text(team: Team) -> str:
+    if len(team.members) <= 2:
+        tail = (
+            "Вас двое — команда распадётся, и второй участник тоже окажется без команды. "
+            "Сообщение об этом я отправлю."
+        )
+    else:
+        tail = "Остальным я сообщу. Вернуться можно по новому приглашению, если останется место."
+    return f"Точно выйти из команды?\n\n{tail}"
+
+
+def team_member_joined_notice(student: Student, team: Team) -> str:
+    return (
+        f"✅ {_person(student)} — теперь в твоей команде. "
+        f"Вас {len(team.members)}, состав — в /team."
+    )
+
+
+def team_member_left_notice(student: Student, remaining: int) -> str:
+    return (
+        f"{_who(student)} больше не в твоей команде — вас {remaining}. "
+        "Позвать кого-нибудь на свободное место — /team."
+    )
+
+
+def team_dissolved_notice(student: Student, teams: Teams) -> str:
+    return (
+        f"{_who(student)} больше не в твоей команде. Команды из одного человека не бывает, "
+        f"так что ты снова без команды. Найти новую — /team, собраться нужно до "
+        f"{format_human_dt(teams.lock_at_ts)}."
+    )
+
+
+def team_declined_notice(student: Student) -> str:
+    return f"{_who(student)}: приглашение отклонено. Позвать кого-нибудь ещё — /team."
+
+
+def team_cancelled_notice(student: Student) -> str:
+    return f"{_who(student)}: приглашение отозвано."
+
+
+def team_invite_gone_notice(other: Student, *, to_inviter: bool) -> str:
+    """Приглашение погасло: адресат попал в команду или автор сменил команду."""
+    if to_inviter:
+        return f"{_who(other)} уже в другой команде — твоё приглашение больше не действует."
+    return f"{_who(other)}: приглашение больше не действует. Актуальные приглашения — в /team."
+
+
+def team_renamed_notice(name: str) -> str:
+    return f"Новое название команды: «{escape_html(name)}»."
+
+
+def team_reminder_text(teams: Teams) -> str:
+    return (
+        f"⏳ До {format_human_dt(teams.lock_at_ts)} нужно собраться в команду для итогового "
+        "проекта, а ты пока без команды.\n\n"
+        "Открой /team: там поиск однокурсников по фамилии, список тех, кто ещё без команды, "
+        "и приглашения, если тебя уже позвали. Кто останется без команды, того распределит "
+        "преподаватель."
+    )
+
+
+def format_teams_board(
+    teams: Sequence[Team],
+    students: Sequence[Student],
+    config: Teams,
+    now: int,
+    pending: int = 0,
+) -> list[str]:
+    """Команды для преподавателя строками. Одинаковы в терминале и в боте."""
+    in_team = {member.id for team in teams for member in team.members}
+    free = [student for student in students if student.id not in in_team]
+    lock = format_human_dt(config.lock_at_ts)
+    state = f"сборка до {lock}" if config.is_open(now) else f"сборка закрыта {lock}"
+    lines = [
+        f"Команды итогового проекта · {state}",
+        f"Команд {len(teams)} · распределено {len(in_team)} из {len(students)} "
+        f"· без команды {len(free)}",
+    ]
+    if pending and config.is_open(now):
+        lines.append(f"Приглашений без ответа: {pending}")
+    for team in teams:
+        head = f"Команда {team.id}" + (f" · {team.name}" if team.name else "")
+        if len(team.members) < config.min_size:
+            head += f" · меньше {config.min_size}"
+        lines.extend(["", head])
+        lines.extend(
+            f"— {short_name(member.full_name)} ({short_group(member.group_code)})"
+            for member in team.members
+        )
+    lines.extend(["", f"Без команды · {len(free)}"])
+    lines.extend(
+        f"— {short_name(student.full_name)} ({short_group(student.group_code)})"
+        for student in free
+    )
     return lines
